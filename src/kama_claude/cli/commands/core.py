@@ -9,7 +9,7 @@ from pathlib import Path
 
 from kama_claude.core.config import KamaConfig
 
-_PID_FILE = Path.home() / ".kama" / "kama-core.pid"
+_PID_FILE = Path(".kama/kama-core.pid")
 
 
 # 尝试连接 daemon，成功则正常返回，失败则抛出 ConnectionRefusedError/OSError

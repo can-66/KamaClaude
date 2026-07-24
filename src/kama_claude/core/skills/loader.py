@@ -63,7 +63,7 @@ def _parse_skill_file(path: Path) -> Skill:
     )
 
 
-# 按三级优先级（项目本地 > 用户全局 > 内建）查找并解析 skill
+# 按两级优先级（项目本地 > 内建）查找并解析 skill
 class SkillLoader:
     _BUILTIN_DIR = Path(__file__).parent / "builtin"
 
@@ -81,7 +81,6 @@ class SkillLoader:
     def _search_paths(self, name: str) -> list[Path]:
         dirs = [
             Path(".kama/skills"),
-            Path("~/.kama/skills").expanduser(),
             self._BUILTIN_DIR,
         ]
         paths: list[Path] = []
@@ -95,7 +94,6 @@ class SkillLoader:
         seen: dict[str, None] = {}
         for d in [
             self._BUILTIN_DIR,
-            Path("~/.kama/skills").expanduser(),
             Path(".kama/skills"),
         ]:
             if d.exists():
@@ -110,7 +108,6 @@ class SkillLoader:
         seen: dict[str, Skill] = {}
         for d in [
             self._BUILTIN_DIR,
-            Path("~/.kama/skills").expanduser(),
             Path(".kama/skills"),
         ]:
             if d.exists():

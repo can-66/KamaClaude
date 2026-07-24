@@ -9,6 +9,7 @@ import signal
 import time
 from datetime import UTC
 from pathlib import Path
+from types import FrameType
 from typing import Any
 
 from pydantic import BaseModel
@@ -54,6 +55,22 @@ logger = logging.getLogger(__name__)
 
 def _now() -> str:
     return datetime.datetime.now(UTC).isoformat()
+
+
+# 注册退出信号；Windows 不支持事件循环信号处理器时回退到同步 signal.signal
+def _register_shutdown_signal(
+    loop: asyncio.AbstractEventLoop,
+    shutdown: asyncio.Event,
+    sig: signal.Signals,
+) -> None:
+    try:
+        loop.add_signal_handler(sig, shutdown.set)
+    except NotImplementedError:
+        # 将同步信号安全转发回 asyncio 事件循环
+        def _set_shutdown(_signum: int, _frame: FrameType | None) -> None:
+            loop.call_soon_threadsafe(shutdown.set)
+
+        signal.signal(sig, _set_shutdown)
 
 
 class CoreApp:
@@ -178,7 +195,7 @@ class CoreApp:
     ) -> int:
         path = events_file(run_id)
         if not path.exists():
-            for candidate in Path("~/.kama/sessions").expanduser().glob(
+            for candidate in Path(".kama/sessions").glob(
                 f"*/runs/{run_id}/events.jsonl"
             ):
                 path = candidate
@@ -217,7 +234,7 @@ class CoreApp:
             await self._trace.start()
             self._bus.subscribe(self._trace_event_handler)
 
-        policy_file = Path("~/.kama/policy.toml").expanduser()
+        policy_file = Path(".kama/policy.toml")
         self._permission_manager = PermissionManager(
             policy_file=policy_file,
             timeout_s=self._config.permission.timeout_s,
@@ -230,7 +247,7 @@ class CoreApp:
 
         self._broadcaster = IpcEventBroadcaster(trace=self._trace)
         self._bus.subscribe(self._broadcaster.handle)
-        sessions_root = Path("~/.kama/sessions").expanduser()
+        sessions_root = Path(".kama/sessions")
         store = SessionStore(sessions_root)
         assert self._config is not None
         compact_provider = AnthropicProvider(self._config.llm.default_model)
@@ -275,8 +292,8 @@ class CoreApp:
 
         loop = asyncio.get_running_loop()
         shutdown = asyncio.Event()
-        loop.add_signal_handler(signal.SIGINT, shutdown.set)
-        loop.add_signal_handler(signal.SIGTERM, shutdown.set)
+        _register_shutdown_signal(loop, shutdown, signal.SIGINT)
+        _register_shutdown_signal(loop, shutdown, signal.SIGTERM)
 
         await shutdown.wait()
 

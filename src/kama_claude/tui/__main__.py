@@ -9,7 +9,7 @@ from pathlib import Path
 from kama_claude.core.config import get_config
 from kama_claude.tui.app import KamaTuiApp
 
-_DEFAULT_TUI_LOG = "~/.kama/logs/tui.log"
+_DEFAULT_TUI_LOG = ".kama/logs/tui.log"
 
 
 # TUI 文件日志初始化：不写 stderr（避免干扰 Textual 渲染），只写滚动文件

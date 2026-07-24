@@ -10,6 +10,14 @@ build/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+.cache/
+.tmp/
+.uv-cache/
+.kama/logs/
+.kama/traces/
+.kama/sessions/
+.kama/policy.toml
+.kama/kama-core.pid
 .vscode/
 uv.lock
 .idea/

@@ -11,12 +11,12 @@ from dotenv import load_dotenv
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 7437
 _DEFAULT_LOG_LEVEL = "INFO"
-_DEFAULT_LOG_FILE = "~/.kama/logs/core.log"
+_DEFAULT_LOG_FILE = ".kama/logs/core.log"
 _DEFAULT_LOG_FORMAT = "text"
-_DEFAULT_CONFIG_PATH = "~/.kama/config.toml"
+_DEFAULT_CONFIG_PATH = ".kama/config.toml"
 _DEFAULT_MAX_STEPS = 20
 _DEFAULT_MODEL = "claude-sonnet-4-6"
-_DEFAULT_TRACE_FILE = "~/.kama/traces/daemon.jsonl"
+_DEFAULT_TRACE_FILE = ".kama/traces/daemon.jsonl"
 
 
 @dataclass
@@ -92,15 +92,12 @@ def get_config() -> KamaConfig:
     # .env 必须在读取 KAMA_CONFIG 之前加载，以便 .env 中的 KAMA_CONFIG 能影响 TOML 路径
     load_dotenv(".env", override=False)
 
-    # 若显式指定 KAMA_CONFIG，只读该文件；否则按优先级叠加：全局 → 项目本地
+    # 若显式指定 KAMA_CONFIG，只读该文件；否则读取项目内配置
     explicit = os.environ.get("KAMA_CONFIG")
     if explicit:
         config_paths = [Path(explicit).expanduser()]
     else:
-        config_paths = [
-            Path(_DEFAULT_CONFIG_PATH).expanduser(),
-            Path(".kama/config.toml"),
-        ]
+        config_paths = [Path(_DEFAULT_CONFIG_PATH)]
 
     for config_path in config_paths:
         if config_path.exists():

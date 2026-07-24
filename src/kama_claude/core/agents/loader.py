@@ -14,7 +14,7 @@ class AgentProfile:
     model: str = ""
 
 
-# 按两级优先级（项目本地 > 用户全局 > 内建）查找并解析角色配置
+# 按两级优先级（项目本地 > 内建）查找并解析角色配置
 class AgentProfileLoader:
     _BUILTIN_DIR = Path(__file__).parent / "builtin"
 
@@ -28,12 +28,11 @@ class AgentProfileLoader:
                     return None
         return None
 
-    # 返回 [项目本地, 用户全局, 内建] 路径；load() 返回第一个存在的，项目本地优先级最高
+    # 返回 [项目本地, 内建] 路径；load() 返回第一个存在的，项目本地优先级最高
     def _search_paths(self, name: str) -> list[Path]:
         builtin = self._BUILTIN_DIR / f"{name}.toml"
-        global_ = Path("~/.kama/agents").expanduser() / f"{name}.toml"
         local = Path(".kama/agents") / f"{name}.toml"
-        return [local, global_, builtin]
+        return [local, builtin]
 
     # 解析 TOML 角色配置文件
     def _parse(self, path: Path, name: str) -> AgentProfile:
