@@ -8,6 +8,11 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+# S0 新手先抓住两件事：
+# 1. 配置最终都会汇总到一个 KamaConfig 对象，业务代码不必自己到处读取环境变量。
+# 2. 同一项配置若在多处出现，越靠后的来源优先级越高。
+#
+# 当前 main 已包含 S1-S7 的配置；S0 只需关注 host、port 和 logging。
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 7437
 _DEFAULT_LOG_LEVEL = "INFO"
@@ -19,12 +24,15 @@ _DEFAULT_MODEL = "claude-sonnet-4-6"
 _DEFAULT_TRACE_FILE = ".kama/traces/daemon.jsonl"
 
 
+# S0：日志相关配置被单独分组，最终通过 KamaConfig.logging 访问
 @dataclass
 class LoggingConfig:
     level: str = _DEFAULT_LOG_LEVEL
     file: str = _DEFAULT_LOG_FILE
     format: str = _DEFAULT_LOG_FORMAT  # "text" | "json"
 
+
+# ---------------- S1 及以后新增的配置组：S0 可以先跳过 ----------------
 
 @dataclass
 class AgentConfig:
@@ -74,9 +82,9 @@ class McpConfig:
 
 @dataclass
 class KamaConfig:
-    host: str = _DEFAULT_HOST
-    port: int = _DEFAULT_PORT
-    logging: LoggingConfig = field(default_factory=LoggingConfig)
+    host: str = _DEFAULT_HOST  # S0：daemon 监听地址
+    port: int = _DEFAULT_PORT  # S0：daemon 监听端口
+    logging: LoggingConfig = field(default_factory=LoggingConfig)  # S0：日志配置
     agent: AgentConfig = field(default_factory=AgentConfig)
     llm: LlmConfig = field(default_factory=LlmConfig)
     trace: TraceConfig = field(default_factory=TraceConfig)
@@ -85,20 +93,24 @@ class KamaConfig:
     mcp: McpConfig = field(default_factory=McpConfig)
 
 
-# 构建并返回运行时配置：默认值 → 全局 TOML → 项目本地 TOML → .env → 系统环境变量（后者优先级最高）
+# 构建配置：内置默认值 → 项目 TOML → .env → 系统环境变量（后者优先级最高）
 def get_config() -> KamaConfig:
+    # 第 1 层：实例化 dataclass，得到所有内置默认值。
     config = KamaConfig()
 
-    # .env 必须在读取 KAMA_CONFIG 之前加载，以便 .env 中的 KAMA_CONFIG 能影响 TOML 路径
+    # 准备阶段：先把 .env 中缺失的键补入 os.environ，但此时还没有写入 config。
+    # 它必须先执行，因为 .env 自己也可以声明 KAMA_CONFIG 来决定 TOML 路径。
+    # override=False 保证真实系统环境变量不会被 .env 覆盖。
     load_dotenv(".env", override=False)
 
-    # 若显式指定 KAMA_CONFIG，只读该文件；否则读取项目内配置
+    # 第 2 层：若设置 KAMA_CONFIG 就读指定文件，否则读项目内默认 TOML。
     explicit = os.environ.get("KAMA_CONFIG")
     if explicit:
         config_paths = [Path(explicit).expanduser()]
     else:
         config_paths = [Path(_DEFAULT_CONFIG_PATH)]
 
+    # TOML 不存在时安静跳过；存在但语法错误时尽早退出并给出清楚原因。
     for config_path in config_paths:
         if config_path.exists():
             try:
@@ -108,16 +120,19 @@ def get_config() -> KamaConfig:
                 raise SystemExit(f"Config parse error ({config_path}): {e}") from e
             _apply_toml(config, data)
 
+    # 第 3/4 层：用合并后的 KAMA_* 覆盖对象；系统变量因 override=False 而获胜。
     _apply_env(config)
     return config
 
 
 # 将已解析的 TOML 根表写入 config；未知小节或类型错误时退出进程
 def _apply_toml(config: KamaConfig, data: dict[str, Any]) -> None:
+    # 拒绝未知顶层键可以尽早发现拼写错误，避免“配置写了但悄悄没生效”。
     unknown = set(data.keys()) - {"core", "logging", "agent", "llm", "trace", "permission", "compaction", "mcp"}
     if unknown:
         raise SystemExit(f"Unknown top-level config keys: {', '.join(sorted(unknown))}")
 
+    # ---------------- S0：解析 [core] 的 host 和 port ----------------
     if "core" in data:
         core = data["core"]
         if not isinstance(core, dict):
@@ -136,6 +151,7 @@ def _apply_toml(config: KamaConfig, data: dict[str, Any]) -> None:
                 raise SystemExit("Config error: core.port must be an integer")
             config.port = val
 
+    # ---------------- S0：解析 [logging] ----------------
     if "logging" in data:
         log = data["logging"]
         if not isinstance(log, dict):
@@ -150,6 +166,7 @@ def _apply_toml(config: KamaConfig, data: dict[str, Any]) -> None:
                     raise SystemExit(f"Config error: logging.{key} must be a string")
                 setattr(config.logging, key, val)
 
+    # ---------------- S1 及以后配置：S0 阅读到这里可跳到 _apply_env ----------------
     if "agent" in data:
         agent = data["agent"]
         if not isinstance(agent, dict):
@@ -290,6 +307,7 @@ def _apply_toml(config: KamaConfig, data: dict[str, Any]) -> None:
 
 # 用 KAMA_* 环境变量覆盖 config 中对应字段（若变量已设置）
 def _apply_env(config: KamaConfig) -> None:
+    # S0 先读这几个变量；“is not None”允许显式传入空字符串。
     host = os.environ.get("KAMA_HOST")
     if host is not None:
         config.host = host
@@ -313,6 +331,7 @@ def _apply_env(config: KamaConfig) -> None:
     if log_format is not None:
         config.logging.format = log_format
 
+    # ---------------- S1 及以后环境变量：S0 学习到这里可以先停 ----------------
     max_steps_str = os.environ.get("KAMA_MAX_STEPS")
     if max_steps_str is not None:
         try:

@@ -1,3 +1,5 @@
+# 本文件只做“统一导出”：外部模块可以从 core.bus 导入常用协议类型。
+# 真正的模型定义仍在 envelope.py、commands.py 和 events.py 中。
 from kama_claude.core.bus.commands import Command, PingCommand, PongResult
 from kama_claude.core.bus.envelope import (
     INTERNAL_ERROR,

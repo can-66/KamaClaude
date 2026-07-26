@@ -52,7 +52,11 @@ from kama_claude.core.transport.socket_server import SocketServer, get_connectio
 
 logger = logging.getLogger(__name__)
 
+# CoreApp 是 daemon 的“总装配入口”：它创建各组件并把 method 注册到 SocketServer。
+# 当前 main 已发展到 S7，因此本文件很长；学习 S0 时只跟这条线：
+# get_config → setup_logging → SocketServer → register("core.ping") → start → stop。
 
+# 生成事件和 trace 使用的 UTC 时间戳
 def _now() -> str:
     return datetime.datetime.now(UTC).isoformat()
 
@@ -74,6 +78,7 @@ def _register_shutdown_signal(
 
 
 class CoreApp:
+    # 初始化 daemon 运行期状态；S0 真正会用到的只有 _start_time
     def __init__(self) -> None:
         self._start_time = time.monotonic()
         self._bus = EventBus()
@@ -87,8 +92,11 @@ class CoreApp:
 
     # 处理 core.ping 请求，返回服务版本、运行时长和接收时间
     async def _ping_handler(self, params: dict[str, Any]) -> PongResult:
+        # SocketServer 已校验 JSON-RPC 外壳；这里读取 ping 自己的业务参数。
+        # 当前实现对缺少 client 的旧客户端保持宽容，默认记为 unknown。
         client = params.get("client", "unknown")
         logger.debug("ping from %s", client)
+        # uptime 使用 monotonic() 计算，避免系统时钟调整导致运行时长倒退。
         return PongResult(
             server_version=kama_claude.__version__,
             uptime_ms=int((time.monotonic() - self._start_time) * 1000),
@@ -224,10 +232,12 @@ class CoreApp:
 
     # 启动守护进程：加载配置、初始化日志、启动 trace、启动 TCP 服务器，并等待退出信号
     async def run(self) -> None:
+        # ---------------- S0 步骤 1：配置和日志 ----------------
         self._start_time = time.monotonic()
         self._config = get_config()
         setup_logging(self._config)
 
+        # ---------------- S1-S7 初始化：学习 S0 时先跳到 SocketServer ----------------
         if self._config.trace.enabled:
             trace_path = Path(self._config.trace.file).expanduser()
             self._trace = TraceWriter(trace_path)
@@ -270,12 +280,14 @@ class CoreApp:
             provider=compact_provider,
         )
 
+        # ---------------- S0 步骤 2：创建 TCP server 并注册路由 ----------------
         server = SocketServer(
             self._config.host,
             self._config.port,
             self._broadcaster,
             trace=self._trace,
         )
+        # S0 只有这一条路由；其他 register 调用均为后续阶段新增。
         server.register("core.ping", self._ping_handler)
         server.register("agent.run", self._agent_run_handler)
         server.register("event.subscribe", self._subscribe_handler)
@@ -286,10 +298,12 @@ class CoreApp:
         server.register("permission.respond", self._permission_respond_handler)
         server.register("session.compact", self._session_compact_handler)
 
+        # ---------------- S0 步骤 3：真正绑定 host:port 开始监听 ----------------
         addr = await server.start()
         logger.info("kama-core %s listening addr=%s", kama_claude.__version__, addr)
         logger.info("config: %s", self._config)
 
+        # ---------------- S0 步骤 4：保持 daemon 常驻，直到收到退出信号 ----------------
         loop = asyncio.get_running_loop()
         shutdown = asyncio.Event()
         _register_shutdown_signal(loop, shutdown, signal.SIGINT)
@@ -297,6 +311,7 @@ class CoreApp:
 
         await shutdown.wait()
 
+        # ---------------- S0 步骤 5：释放资源并停止监听 ----------------
         logger.info("shutting down")
         for run_task in list(self._running_runs):
             run_task.cancel()

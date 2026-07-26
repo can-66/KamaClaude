@@ -1,5 +1,8 @@
 # KamaClaude
 
+> 第一次学习项目、对进程/TCP/异步还不熟悉，可以先读
+> [《S0 新手学习指南》](docs/S0_新手学习指南.md)，再回到完整项目介绍。
+
 我最近在公众号「卡码大模型」上，更新了很多关于 Agent、codex、Claude工作原理的文章。
 
 这些文章目前已经沉淀在卡码笔记上：[https://notes.kamacoder.com](https://notes.kamacoder.com)

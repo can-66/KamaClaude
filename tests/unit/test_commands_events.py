@@ -6,6 +6,9 @@ from pydantic import ValidationError
 from kama_claude.core.bus.commands import PingCommand, PongResult
 from kama_claude.core.bus.events import CoreStartedEvent
 
+# 这些测试对应 S0 的三种业务模型：请求参数、成功结果、启动事件。
+# “roundtrip”指对象 → JSON → 对象，字段和类型在往返后仍保持一致。
+
 
 # 功能：验证 PingCommand 序列化后再反序列化，client 和 type 字段完整保留
 # 设计：JSON 往返测试确认 wire 协议的序列化正确性，type 字段是 discriminated union 的判别键

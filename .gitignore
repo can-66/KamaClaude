@@ -1,23 +1,34 @@
+# 本机密钥和虚拟环境
 .env
 .venv/
+
+# Python 解释器和测试缓存
 __pycache__/
 *.pyc
 *.pyo
+
+# 项目运行及构建产物
 runs/
 dist/
 build/
 *.egg-info/
+
+# 开发工具缓存与临时目录
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
 .cache/
 .tmp/
 .uv-cache/
+
+# KamaClaude 本地状态；这些文件由运行中的程序生成，不属于源码
 .kama/logs/
 .kama/traces/
 .kama/sessions/
 .kama/policy.toml
 .kama/kama-core.pid
+
+# 编辑器、系统和本地工作目录
 .vscode/
 uv.lock
 .idea/

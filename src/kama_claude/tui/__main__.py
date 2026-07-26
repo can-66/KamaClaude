@@ -9,6 +9,8 @@ from pathlib import Path
 from kama_claude.core.config import get_config
 from kama_claude.tui.app import KamaTuiApp
 
+# 原始 S0 的 TUI 只有“将在 S2 实现”的占位输出；当前文件是后续阶段完整版。
+# 学习 S0 时只需知道 pyproject.toml 已提前保留 kama-tui 入口，无需继续精读。
 _DEFAULT_TUI_LOG = ".kama/logs/tui.log"
 
 

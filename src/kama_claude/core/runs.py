@@ -4,11 +4,13 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+# S0 只需知道这些路径辅助函数存在；真正的 run/event 文件会在 S1 以后使用。
 RUNS_DIR = Path("runs")
 
 
 # 返回指定 run_id 对应的目录路径
 def run_dir(run_id: str) -> Path:
+    # pathlib 的 `/` 表示拼接路径，不是数学除法。
     return RUNS_DIR / run_id
 
 

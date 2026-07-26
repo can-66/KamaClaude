@@ -1,4 +1,9 @@
 # KamaClaude 项目配置（PEP 621 + Hatch 构建 + 常用工具链）
+#
+# S0 新手阅读提示：
+# 1. 这个文件不是业务代码，而是 Python 项目的“说明书”。
+# 2. 初学 S0 时先看 [project]、[project.scripts] 和 pytest 配置即可。
+# 3. 最关键的是 [project.scripts]：它把终端命令映射到 Python 函数。
 
 # ---- PEP 517：声明如何构建 wheel/sdist ----
 [build-system]
@@ -18,7 +23,7 @@ dependencies = [
     "httpx[socks]>=0.28.1",
 ]
 
-# 安装后可在 PATH 中执行的入口：`kama` / `kama-core` / `kama-tui`
+# 安装后可在 PATH 中执行的入口：等号左边是终端命令，右边是“模块:函数”
 [project.scripts]
 kama = "kama_claude.cli.main:main"
 kama-core = "kama_claude.core.app:run"

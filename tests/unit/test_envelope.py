@@ -10,6 +10,9 @@ from kama_claude.core.bus.envelope import (
     make_error,
 )
 
+# 单元测试只验证一个小模块，不启动 TCP server。
+# 本文件把 envelope.py 当作协议契约，重点检查“合法数据能往返，坏数据会被拒绝”。
+
 
 # 功能：验证 JsonRpcRequest 序列化后再反序列化，所有字段值完整保留
 # 设计：JSON 往返（model_dump_json → model_validate_json）确认字段完整性，这是 NDJSON wire 协议的基本契约

@@ -5,7 +5,10 @@ import socket
 
 from kama_claude.core.transport.socket_server import SocketServer
 
+# 注意：这个文件是后续阶段为 broadcaster 回归补上的测试，不存在于真实 stage/s0 快照。
+# 学习 S0 时可把第二个用例当补充；核心 ping 错误路径在 integration 测试中覆盖。
 
+# 返回一个当前空闲端口，供本文件短暂启动 SocketServer
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
@@ -19,6 +22,7 @@ async def test_broadcaster_unsubscribe_called_on_disconnect() -> None:
     unsubscribed = asyncio.Event()
 
     class MockBroadcaster:
+        # 用 Event 记录清理动作，避免依赖不稳定的 sleep 时间
         def unsubscribe(self, writer: object) -> None:
             unsubscribed.set()
 

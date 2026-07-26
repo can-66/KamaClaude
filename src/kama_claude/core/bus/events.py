@@ -4,12 +4,17 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Discriminator
 
+# Command 表示“请 Core 做什么”，Event 表示“Core 里发生了什么”。
+# S0 只有启动事件 CoreStartedEvent；丰富的执行事件在后续阶段才出现。
 
+# daemon 成功启动监听后可发布的事件模型
 class CoreStartedEvent(BaseModel):
     type: Literal["core.started"] = "core.started"
     listen_addr: str  # e.g. "127.0.0.1:7437"
-    version: str
+    version: str  # 正在运行的 daemon 版本
 
+
+# ---------------- S1 及以后：S0 学习到这里可以先停 ----------------
 
 class RunStartedEvent(BaseModel):
     type: Literal["run.started"] = "run.started"
@@ -203,7 +208,7 @@ class SkillInvokedEvent(BaseModel):
     ts: str
 
 
-# 根据 type 字段决定事件类型的判别联合
+# 根据 type 字段决定事件类型；这与 commands.py 中的 Command 联合采用同一思路。
 Event = Annotated[
     CoreStartedEvent
     | RunStartedEvent

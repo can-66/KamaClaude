@@ -12,13 +12,19 @@ from kama_claude.cli.commands.version import cmd_version
 from kama_claude.core.config import get_config
 from kama_claude.core.logging_setup import setup_logging
 
+# S0 新手阅读路线：
+# `kama ping` 会从本文件的 main() 进入，然后走到 commands/ping.py。
+# chat、run、core、trace 都是后续阶段加入的命令，学习 S0 时暂时跳过。
+
 
 # CLI 主入口：解析命令行参数并分发到对应子命令
 def main() -> None:
+    # ArgumentParser 负责把终端里的字符串参数变成结构化的 args 对象。
     parser = argparse.ArgumentParser(prog="kama", description="KamaClaude CLI")
     parser.add_argument("--version", action="store_true", help="Print version and exit")
     subparsers = parser.add_subparsers(dest="command")
 
+    # S0 只有 ping；下面的其他子命令展示了这套入口后来如何继续扩展。
     subparsers.add_parser("ping", help="Ping the core daemon")
     subparsers.add_parser("chat", help="Start a multi-turn chat session")
 
@@ -38,16 +44,19 @@ def main() -> None:
     trace_parser.add_argument("--raw", action="store_true", help="Output raw NDJSON")
     trace_parser.add_argument("--follow", "-f", action="store_true", help="Follow new records")
 
+    # 例如 `kama ping` 会得到 args.command == "ping"。
     args = parser.parse_args()
 
     if args.version:
         cmd_version()
         return
 
+    # 所有需要连接 daemon 的子命令共用一份 host/port 和日志配置。
     config = get_config()
     setup_logging(config)
 
     if args.command == "ping":
+        # S0 主线在这里离开参数解析层，进入真正的 TCP 客户端代码。
         cmd_ping(config)
     elif args.command == "chat":
         cmd_chat(config)

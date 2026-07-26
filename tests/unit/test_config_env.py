@@ -7,8 +7,12 @@ import pytest
 from kama_claude.core.config import get_config
 
 
+# 写入测试专用 .env；显式 UTF-8 可避免 Windows 默认编码差异
 def _write_env(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
+
+# 每个用例都在 tmp_path 隔离目录中运行，并用 monkeypatch 自动恢复环境。
+# 这样测试配置优先级时不会读取或污染项目真正的 .env。
 
 
 # 功能：验证 .env 文件中的值被正确加载并覆盖内建默认值

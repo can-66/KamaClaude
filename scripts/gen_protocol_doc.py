@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Generate WIRE_PROTOCOL.md from pydantic models in kama_claude.core.bus."""
+# 从 Pydantic 协议模型生成 WIRE_PROTOCOL.md。
+# S0 的核心思想是“代码模型才是协议事实来源”：请改 bus 模型后重新运行本脚本，
+# 不要直接手改生成出来的 WIRE_PROTOCOL.md，否则下次生成时改动会被覆盖。
 from __future__ import annotations
 
 import argparse
@@ -49,6 +51,7 @@ _OUTPUT_PATH = Path(__file__).parent.parent / "WIRE_PROTOCOL.md"
 
 # 从 pydantic 模型生成一个带字段表、JSON Schema 和可选示例的 Markdown 小节
 def _model_section(name: str, model: type, example: dict | None = None) -> str:  # type: ignore[type-arg]
+    # model_json_schema() 把字段类型、必填项和 Literal 等约束变成标准 JSON Schema。
     schema = model.model_json_schema()  # type: ignore[attr-defined]
     props = schema.get("properties", {})
     required: set[str] = set(schema.get("required", []))
@@ -74,6 +77,7 @@ def _model_section(name: str, model: type, example: dict | None = None) -> str: 
 
 # 生成完整的 WIRE_PROTOCOL.md 文档字符串
 def generate() -> str:
+    # 当前 main 会生成所有阶段的协议；学习 S0 时只看 Ping/Pong、CoreStarted 和错误码。
     run_id = "20260516-100000-abc123"
     ts = "2026-05-16T10:00:00.001Z"
 

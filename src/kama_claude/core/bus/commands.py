@@ -6,17 +6,23 @@ from pydantic import BaseModel, Discriminator
 
 from kama_claude.core.session.model import SessionMode, SessionStatus
 
+# S0 只需精读 PingCommand 与 PongResult。
+# 后面的 Agent、Session、Permission 命令都是沿用同一模式在后续阶段扩展出来的。
 
+# ping 请求的业务参数模型；type 用来在 Command 联合中判别具体命令
 class PingCommand(BaseModel):
     type: Literal["core.ping"] = "core.ping"
-    client: str
+    client: str  # 谁发起了 ping，例如 "cli/0.0.1"
 
 
+# ping 成功后的业务结果模型
 class PongResult(BaseModel):
-    server_version: str
-    uptime_ms: int
+    server_version: str  # daemon 版本，用来发现客户端/服务端版本不一致
+    uptime_ms: int  # daemon 已运行多久，不是本次网络延迟
     received_at: str  # ISO 8601
 
+
+# ---------------- S1 及以后：S0 学习到这里可以先停 ----------------
 
 class AgentRunCommand(BaseModel):
     type: Literal["agent.run"] = "agent.run"
@@ -100,7 +106,8 @@ class SessionCompactResult(BaseModel):
     saved_tokens: int
 
 
-# 根据 type 字段决定命令类型的判别联合
+# 根据 type 字段决定命令类型的判别联合。
+# 例如看到 {"type": "core.ping", ...}，Pydantic 就选择 PingCommand 校验。
 Command = Annotated[
     PingCommand
     | AgentRunCommand

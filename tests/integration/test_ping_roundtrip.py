@@ -4,6 +4,9 @@ import asyncio
 import json
 import subprocess
 
+# 集成测试把多个真实模块串在一起：子进程 daemon、TCP、JSON-RPC、handler 和响应。
+# 它比单元测试慢，但能证明屏幕上的 pong 不是某个函数直接伪造的。
+
 
 # 功能：验证真实 daemon 响应 core.ping 命令并返回包含版本、uptime、时间戳的 PongResult
 # 设计：通过原始 TCP 连接发送 JSON-RPC 帧（不经过任何 SDK 客户端层），直接验证 wire 协议的端到端正确性
@@ -11,6 +14,7 @@ async def test_ping_returns_pong(
     running_daemon: subprocess.Popen[bytes],
     free_port: int,
 ) -> None:
+    # 刻意不用项目 CLI，而是直接连 TCP；这样能独立验证服务端 wire 协议。
     reader, writer = await asyncio.open_connection("127.0.0.1", free_port)
     req = {
         "jsonrpc": "2.0",
@@ -25,6 +29,7 @@ async def test_ping_returns_pong(
     writer.close()
     await writer.wait_closed()
 
+    # 这里直接检查原始 JSON 字段，确认网络对面实际返回了正确协议形状。
     resp = json.loads(line)
     assert resp["jsonrpc"] == "2.0"
     assert resp["id"] == "test-1"
