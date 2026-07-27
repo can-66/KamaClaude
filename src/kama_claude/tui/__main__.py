@@ -9,13 +9,14 @@ from pathlib import Path
 from kama_claude.core.config import get_config
 from kama_claude.tui.app import KamaTuiApp
 
-# 原始 S0 的 TUI 只有“将在 S2 实现”的占位输出；当前文件是后续阶段完整版。
-# 学习 S0 时只需知道 pyproject.toml 已提前保留 kama-tui 入口，无需继续精读。
+# S0 的 TUI 只有“将在 S2 实现”的占位输出；S2 在这里接入配置、--replay 和 KamaTuiApp。
+# 当前 main 又增加了独立滚动日志，学习 S2 时把它视为启动前的后续增强即可。
 _DEFAULT_TUI_LOG = ".kama/logs/tui.log"
 
 
 # TUI 文件日志初始化：不写 stderr（避免干扰 Textual 渲染），只写滚动文件
 def _setup_logging(level: str) -> None:
+    # ---------------- S3+：真实 stage/s2 没有这段文件日志初始化 ----------------
     log_path = Path(os.environ.get("KAMA_TUI_LOG_FILE", _DEFAULT_TUI_LOG)).expanduser()
     log_path.parent.mkdir(parents=True, exist_ok=True)
     handler = logging.handlers.RotatingFileHandler(
@@ -35,6 +36,7 @@ def _setup_logging(level: str) -> None:
 
 # kama-tui 入口：解析 --replay 参数后启动 TUI 应用
 def main() -> None:
+    # --replay 从 S2 起把 run_id 交给 event.subscribe.replay_from_run。
     parser = argparse.ArgumentParser(prog="kama-tui", description="KamaClaude TUI")
     parser.add_argument(
         "--replay",

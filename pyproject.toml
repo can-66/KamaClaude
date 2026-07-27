@@ -6,8 +6,12 @@
 # 3. 最关键的是 [project.scripts]：它把终端命令映射到 Python 函数。
 #
 # S1 新手再多看两处：
-# 1. anthropic 是 S1 新增的 LLM SDK；textual 与 httpx[socks] 服务于后续阶段，可先跳过。
+# 1. anthropic 是 S1 新增的 LLM SDK；httpx[socks] 服务于更后面的网络重试，可先跳过。
 # 2. `kama run` 没有独立脚本入口，它仍从 kama → cli.main:main 进入，再由子命令分发。
+#
+# S2 新手重点看：
+# 1. textual 是 S2 为 `kama-tui` 雏形新增的终端 UI 框架，不是 S3 才出现。
+# 2. 三个脚本入口没有变化；S2 改的是 `kama run` 进入后的执行位置和 `kama-tui` 的实现。
 
 # ---- PEP 517：声明如何构建 wheel/sdist ----
 [build-system]
@@ -23,7 +27,7 @@ dependencies = [
     "pydantic>=2.0",       # 数据校验与序列化（含 JSON 模型等）
     "python-dotenv>=1.0",  # .env 文件解析
     "anthropic>=0.25",     # S1：Anthropic LLM SDK（流式输出 + prompt caching）
-    "textual>=0.75",       # S3+：终端 UI 框架（kama-tui）
+    "textual>=0.75",       # S2：终端 UI 框架（kama-tui）
     "httpx[socks]>=0.28.1", # 后续阶段：代理支持与流中断重试
 ]
 

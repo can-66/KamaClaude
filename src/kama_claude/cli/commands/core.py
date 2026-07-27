@@ -9,10 +9,14 @@ from pathlib import Path
 
 from kama_claude.core.config import KamaConfig
 
+# S2 的 daemon 生命周期命令：`kama core start/status/stop`。
+# 它只管理后台进程，不参与 agent.run 的事件协议；真正的服务入口仍是 CoreApp.run()。
+
+# 当前 main 把 PID 放在项目内；真实 stage/s2 原本使用 Path.home() / ".kama"
 _PID_FILE = Path(".kama/kama-core.pid")
 
 
-# 尝试连接 daemon，成功则正常返回，失败则抛出 ConnectionRefusedError/OSError
+# 探测 daemon 端口是否可连接；这里只建连并关闭，并未发送 core.ping 请求
 async def _ping_check(config: KamaConfig) -> None:
     _r, w = await asyncio.open_connection(config.host, config.port)
     w.close()
@@ -25,6 +29,7 @@ def _running_pid() -> int | None:
         return None
     try:
         pid = int(_PID_FILE.read_text().strip())
+        # 信号 0 只探测 PID 是否存在，不会真正终止进程。
         os.kill(pid, 0)
         return pid
     except (ValueError, ProcessLookupError, PermissionError):
@@ -51,6 +56,7 @@ def cmd_core_start(config: KamaConfig) -> None:
         pass
 
     proc = subprocess.Popen(
+        # 用当前 Python 环境启动包入口，保证依赖与当前 kama CLI 一致。
         [sys.executable, "-m", "kama_claude.core"],
         start_new_session=True,
         stdout=subprocess.DEVNULL,
@@ -63,6 +69,7 @@ def cmd_core_start(config: KamaConfig) -> None:
 
 # 向 daemon 发送 SIGTERM 停止进程，若未运行则提示
 def cmd_core_stop(config: KamaConfig) -> None:
+    # config 保持与另外两个 core 子命令一致，但停止动作本身只依赖 PID 文件。
     pid = _running_pid()
     if pid is None:
         print("not running")

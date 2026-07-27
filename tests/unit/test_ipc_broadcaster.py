@@ -8,7 +8,10 @@ from unittest.mock import AsyncMock, MagicMock
 from kama_claude.core.bus.events import RunStartedEvent, StepStartedEvent
 from kama_claude.core.transport.ipc_broadcaster import IpcEventBroadcaster
 
+# 本文件隔离验证 S2 服务端扇出层，不启动 SocketServer 或真实 daemon。
+# writer 使用 mock，因而每个用例只聚焦过滤、序列化或订阅生命周期。
 
+# 构造最小 StreamWriter 替身，可选择让 drain() 模拟断线
 def _make_writer(*, drain_raises: Exception | None = None) -> asyncio.StreamWriter:
     writer = MagicMock(spec=asyncio.StreamWriter)
     if drain_raises is not None:
@@ -18,6 +21,7 @@ def _make_writer(*, drain_raises: Exception | None = None) -> asyncio.StreamWrit
     return cast(asyncio.StreamWriter, writer)
 
 
+# 构造字段固定的 run.started，减少每个测试重复样板
 def _run_started(run_id: str = "r1") -> RunStartedEvent:
     return RunStartedEvent(run_id=run_id, goal="test", ts="2026-01-01T00:00:00Z")
 
@@ -106,8 +110,7 @@ async def test_unsubscribe_stops_delivery() -> None:
 
 
 # 功能：验证写入失败（ConnectionResetError）后订阅自动移除，下次 handle 不再尝试写入
-# 设计：drain() 抛出 ConnectionResetError 触发死连接清理；断言第二次 handle 时 write 未被调用；
-#       第一次 write 在 drain 前已执行，call_count==1 是预期行为而非被测点
+# 设计：让 drain 抛连接异常，先确认首次 write 已发生，再清空 mock 并验证第二次发布不再写入
 async def test_dead_connection_removed_after_failure() -> None:
     broadcaster = IpcEventBroadcaster()
     writer = _make_writer(drain_raises=ConnectionResetError())

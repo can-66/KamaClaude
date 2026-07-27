@@ -4,8 +4,8 @@ import pytest
 
 from kama_claude.cli.commands.run import StdoutPrinter
 
-# 本文件是 S2 为 dict 版 StdoutPrinter 补的测试，不属于原始 S1 文件集。
-# 但它验证的“把 S1 事件流实时展示给人看”概念仍值得在读完 S1 主线后回看。
+# 本文件是 S2 为 IPC dict 版 StdoutPrinter 新增的测试，不属于真实 S1 文件集。
+# 它证明网络事件到达人类可读终端的最后一步，但不负责验证 SocketClient 收包。
 
 # 功能：验证 run.started 事件在 stdout 中打印 [run] 前缀和 run_id
 # 设计：用 capsys 捕获 stdout，直接断言关键字符串，避免对格式细节过度约束

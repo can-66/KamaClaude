@@ -2,8 +2,9 @@
 # 从 Pydantic 协议模型生成 WIRE_PROTOCOL.md。
 # S0 的核心思想是“代码模型才是协议事实来源”：请改 bus 模型后重新运行本脚本，
 # 不要直接手改生成出来的 WIRE_PROTOCOL.md，否则下次生成时改动会被覆盖。
-# S1 在生成结果里新增 Run / Step / Tool / LLM 事件；当前脚本还包含 S2+ 的
-# IPC 命令和 Session 事件，学习 S1 时只读对应事件章节即可。
+# S1 在生成结果里新增 Run / Step / Tool / LLM 事件；S2 再加入 agent.run、
+# event.subscribe 和 EventPushEnvelope。当前脚本还包含 S4+ Session 协议，
+# 学习 S2 时读到 Server Push 与 Run Events 即可，Session Events 可以先跳过。
 from __future__ import annotations
 
 import argparse
@@ -80,7 +81,7 @@ def _model_section(name: str, model: type, example: dict | None = None) -> str: 
 # 生成完整的 WIRE_PROTOCOL.md 文档字符串
 def generate() -> str:
     # 当前 main 会生成所有阶段的协议；学习 S0 时只看 Ping/Pong、CoreStarted 和错误码。
-    # 学习 S1 时再读 Run Events；AgentRun/EventSubscribe 属于 S2 的 IPC 外化。
+    # 学习 S1 时再读 Run Events；AgentRun/EventSubscribe/EventPush 属于 S2 的 IPC 外化。
     run_id = "20260516-100000-abc123"
     ts = "2026-05-16T10:00:00.001Z"
 
@@ -125,6 +126,7 @@ def generate() -> str:
         "id": "u-3",
         "result": {"subscription_id": "sub-abc123", "replayed_count": 0},
     }
+    # ---------------- S4+：会话协议，S2 学习到这里可先跳到 event_push_example ----------------
     session_id = "sess-abc123def456"
     session_create_req_example = {
         "jsonrpc": "2.0",
@@ -148,6 +150,7 @@ def generate() -> str:
         "id": "u-5",
         "result": {"run_id": run_id},
     }
+    # S2 服务端主动推送不是 JSON-RPC 响应：它没有请求 id，用 kind="event" 与响应分流。
     event_push_example = {
         "kind": "event",
         "event": {

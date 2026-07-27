@@ -41,6 +41,8 @@ from kama_claude.core.trace.writer import TraceWriter
 
 # AgentRunner 是 S1 的“总装配层”：创建 run_id、EventBus、Provider、工具与 AgentLoop，
 # 并保证 run.started / run.finished 与 events.jsonl 首尾闭合。
+# S2 对这里最关键且很小的改动，是允许 daemon 通过 bus= 注入全局 EventBus；
+# AgentRunner 不需要知道谁在监听，事件就能同时流向文件和 IPC broadcaster。
 # 当前 main 同一文件还承载 Session、任务工具、权限、compact、Subagent、MCP、trace；
 # 阅读 S1 时先抓住上面的最小职责，遇到阶段分界即可跳过。
 
@@ -73,7 +75,7 @@ class AgentRunner:
         mcp_manager: McpServerManager | None = None,
     ) -> None:
         self._config = config
-        # 原始 S1 总是内部新建 bus；S2 起允许 daemon 注入全局 bus 以向客户端广播。
+        # S2 的接缝：daemon 注入全局 bus；不传时仍兼容 S1 的本地运行与单元测试。
         self._bus = bus
         self._provider = provider
         self._extra_handlers: list[EventHandler] = extra_handlers or []
@@ -146,7 +148,7 @@ class AgentRunner:
                     registry.register(mcp_tool)
         return registry
 
-    # 执行一次完整的 agent run（委托给 run_and_capture，忽略返回值）
+    # 执行一次完整 run；S2 允许 daemon 传入已提前回给客户端的 run_id
     async def run(self, goal: str, *, run_id: str | None = None) -> None:
         await self.run_and_capture(goal, run_id=run_id)
 
@@ -182,7 +184,7 @@ class AgentRunner:
         # S3+ 任务系统；S1 的注册表只有 read_file，不需要 TaskManager。
         task_manager = TaskManager(run_path / ".tasks")
 
-        # S1 内部创建 EventBus；当前 daemon 注入全局 bus 时会复用同一实例。
+        # S2 daemon 复用全局 bus；本地调用不传 bus 时仍自行创建，保持 S1 行为。
         bus = self._bus if self._bus is not None else EventBus()
         for h in self._extra_handlers:
             bus.subscribe(h)

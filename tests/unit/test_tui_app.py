@@ -11,6 +11,10 @@ from kama_claude.tui.app import (
     _preview,
 )
 
+# 真实 stage/s2 的本文件只有 4 个 RichLog/token-buffer 测试。
+# 当前 main 已改成 widget 块并加入会话、工具和权限交互；前几个基础渲染概念仍源自 S2，
+# input、note_save 等用例属于后续阶段，阅读 S2 时可跳过。
+
 
 # 功能：验证 _preview 超出长度时截断并追加省略号
 # 设计：不依赖任何 TUI 组件，纯函数测试
@@ -28,8 +32,7 @@ def test_param_summary_prefers_key_fields() -> None:
 
 
 # 功能：验证 llm.token 事件累积到 LLMStreamBlock，不连续 token 各自新开一块
-# 设计：monkey-patch _append 收集追加的 widgets，断言 token 追加到同一块；
-#       发送非 token 事件后新 block 被重置，下一个 token 开启新块
+# 设计：替换 _append 收集 widget，先验证连续 token 复用一块，再由非 token 事件切断该块
 def test_llm_tokens_accumulate_in_block() -> None:
     app = KamaTuiApp("127.0.0.1", 9999)
     appended: list[Widget] = []
@@ -158,21 +161,23 @@ def test_note_save_tool_block_shows_remembered() -> None:
 
 
 # 功能：验证提交用户输入时会追加 user turn，并进入 busy 状态
-# 设计：用 fake client 替代 SocketClient，直接调用 on_chat_text_area_submitted，
-#       覆盖 TextArea 清空内容 + 设置 busy 占位符的核心状态迁移
+# 设计：FakeClient 与 FakeArea 隔离网络和 Textual DOM，直接断言清空、禁用、busy 与用户消息
 async def test_input_submit_appends_user_turn_and_disables_prompt() -> None:
     class _FakeArea:
+        # 构造只含提交逻辑会访问字段的输入框替身
         def __init__(self) -> None:
             self.disabled = False
             self.border_title = ""
             self.text = "hello"
 
     class _FakeEvent:
+        # 从输入框生成最小 Submitted 事件替身
         def __init__(self, area: _FakeArea) -> None:
             self.value = area.text
             self.text_area = area
 
     class _FakeClient:
+        # 返回固定 run_id，避免测试建立真实 IPC 连接
         async def send_command(self, method: str, params: dict) -> dict:
             return {"run_id": "run-1"}
 

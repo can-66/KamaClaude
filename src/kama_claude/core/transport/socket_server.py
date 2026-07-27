@@ -27,14 +27,15 @@ from kama_claude.core.transport.ipc_broadcaster import IpcEventBroadcaster
 
 logger = logging.getLogger(__name__)
 
-# 这个文件是 S0 的“服务端传输半边”。
-# 它只负责：收一行 → 校验 JSON-RPC 外壳 → 按 method 找 handler → 回一行。
-# 它不知道 core.ping 的业务细节，因此以后新增命令时不必重写 TCP 读写代码。
+# 这个文件从 S0 起就是“服务端传输半边”：
+# 收一行 → 校验 JSON-RPC 外壳 → 按 method 找 handler → 回一行。
+# S2 在不改变 handler 统一签名的前提下，加了连接上下文和断线退订，
+# 让 event.subscribe 能找到“事件应该推回哪一个 writer”。
 
 # handler 接收 params 字典，并异步返回普通对象或 Pydantic 模型
 type CommandHandler = Callable[[dict[str, Any]], Awaitable[Any]]
 
-# S2 以后：保存当前连接，供事件订阅 handler 找到要推送的客户端；S0 可以跳过
+# S2：保存当前 handler 所属连接，供 event.subscribe 找到推送目标；S0 可以跳过
 _writer_var: ContextVar[asyncio.StreamWriter] = ContextVar("_writer_var")
 
 
@@ -43,16 +44,17 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-# 返回当前 handler 调用所属连接的 StreamWriter
+# 返回当前 handler 调用所属连接的 StreamWriter；ContextVar 隔离并发连接
 def get_connection_writer() -> asyncio.StreamWriter:
     return _writer_var.get()
 
-# 当前 main 为 MCP 大结果放宽到 64 MB；原始 S0 是 1 MB，原理都是限制单帧大小。
+# 当前 main 为 MCP 大结果放宽到 64 MB；原始 S0/S2 都是 1 MB。
 _MAX_LINE_BYTES = 64 * 1024 * 1024
 
 
+# 接收客户端 NDJSON 命令并把响应写回同一连接的 TCP 服务端
 class SocketServer:
-    # 保存监听地址及可选的后续阶段组件；S0 只需要 host、port 和 handlers
+    # 保存监听地址及可选组件；broadcaster 是 S2，trace 是 S3+
     def __init__(
         self,
         host: str,
@@ -66,6 +68,7 @@ class SocketServer:
         self._server: asyncio.AbstractServer | None = None
         self._broadcaster = broadcaster
         self._trace = trace
+        # 当前 main 的安全关闭增强；原始 S2 只关闭监听 socket。
         self._active_writers: set[asyncio.StreamWriter] = set()
 
     # 注册“方法名 → 处理函数”，例如 "core.ping" → CoreApp._ping_handler
@@ -124,6 +127,7 @@ class SocketServer:
         finally:
             # finally 保证正常断开和异常断开都不会遗留 writer。
             self._active_writers.discard(writer)
+            # S2 退订按连接身份清理，正常关闭和异常断开都会执行。
             if self._broadcaster is not None:
                 self._broadcaster.unsubscribe(writer)
             try:
@@ -150,7 +154,7 @@ class SocketServer:
                 # 空 bytes 表示对端已经关闭连接，而不是收到了一条空 JSON。
                 return
 
-            # 当前 main 为后续长任务并发创建 task；原始 S0 是直接 await 顺序处理。
+            # 当前 main 为后续长任务并发创建 task；真实 S2 仍是直接 await、按行顺序处理。
             asyncio.create_task(self._handle_line(line, writer))
 
     # 依次完成 JSON 解析、外壳校验、方法路由、handler 调用和成功/错误响应
@@ -191,7 +195,7 @@ class SocketServer:
             )
             return
 
-        # 后续事件订阅需要知道当前连接；它不是 S0 ping 的必要条件。
+        # S2 事件订阅需要当前 writer；ContextVar 让 handler 签名仍保持 handler(params)。
         _writer_var.set(writer)
         try:
             # 传输层只把 params 交给 handler，业务参数应由具体 handler 再校验。

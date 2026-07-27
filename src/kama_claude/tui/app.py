@@ -6,8 +6,6 @@ import logging
 import time
 from typing import Any
 
-log = logging.getLogger(__name__)
-
 from rich.markdown import Markdown
 from textual import events
 from textual.app import App, ComposeResult
@@ -22,13 +20,19 @@ from kama_claude.core.config import KamaConfig
 from kama_claude.core.skills.loader import SkillLoader
 from kama_claude.core.transport.socket_client import IpcError, SocketClient
 
+log = logging.getLogger(__name__)
 
+# S2 首次把 TUI 从占位符变成真实 IPC 客户端：连接 daemon、订阅事件、断线重连并渲染进度。
+# 当前 main 已把 S2 的 Label + RichLog 雏形扩展成多轮会话、输入框、权限、Skill 和 Subagent UI。
+# 学习 S2 时优先看 KamaTuiApp 的连接参数、on_mount()、_socket_loop() 与基础事件分支；
+# PermissionSelect、SlashCompleteWidget、ChatTextArea 及 session/permission 事件都可以先跳过。
+
+# 截断过长文本并在确实发生截断时追加省略号
 def _preview(s: str, n: int) -> str:
     return s[:n] + "…" if len(s) > n else s
 
 
-
-
+# 把工具参数转成保留中文且便于展开阅读的 JSON 文本
 def _params_str(params: dict[str, Any]) -> str:
     return json.dumps(params, ensure_ascii=False, indent=2)
 
@@ -97,6 +101,7 @@ class ToolCallBlock(Widget):
         self._is_error = False
         self._finished = False
 
+    # 声明折叠摘要与展开详情两个子 widget
     def compose(self) -> ComposeResult:
         yield Static(self._summary(), classes="summary")
         yield Static("", classes="detail")
@@ -183,6 +188,7 @@ class PermissionSelect(Static):
         self._tool_use_id = tool_use_id
         self._cursor = 0
 
+    # 挂载后绘制选项并主动获取键盘焦点
     def on_mount(self) -> None:
         self.update(self._render_ui())
         self.focus()
@@ -204,7 +210,11 @@ class PermissionSelect(Static):
 
     # 焦点到达时记录，用于确认 focus() 是否真正生效
     def on_focus(self, event: events.Focus) -> None:
-        log.debug("PermissionSelect.on_focus  has_focus=%s  app.focused=%r", self.has_focus, self.app.focused)
+        log.debug(
+            "PermissionSelect.on_focus  has_focus=%s  app.focused=%r",
+            self.has_focus,
+            self.app.focused,
+        )
 
     # 焦点离开时记录，用于追踪是否被其他控件抢走焦点
     def on_blur(self, event: events.Blur) -> None:
@@ -262,6 +272,7 @@ class PermissionBlock(Static):
 
     # 子类提交消息：用户作出权限决策时发布
     class Resolved(Message):
+        # 保存被更新的审批块和最终决策
         def __init__(self, block: PermissionBlock, decision: str) -> None:
             self.block = block
             self.decision = decision
@@ -275,6 +286,7 @@ class PermissionBlock(Static):
         self._resolved = False
         super().__init__(self._pending_text(), classes="log-line")
 
+    # 生成等待用户审批时的单行提示
     def _pending_text(self) -> str:
         preview = f"  [dim]{self._param_preview}[/dim]" if self._param_preview else ""
         return f"[bold red]? permission[/bold red]  [bold]{self._tool_name}[/bold]{preview}"
@@ -352,6 +364,7 @@ class SlashCompleteWidget(Static):
     def has_selection(self) -> bool:
         return len(self._filtered) > 0
 
+    # 挂载后立即绘制初始候选列表
     def on_mount(self) -> None:
         self._redraw()
 
@@ -393,6 +406,7 @@ class ChatTextArea(TextArea):
 
     # 子类自定义的提交消息，供宿主 App 监听
     class Submitted(Message):
+        # 从输入框快照提交文本，同时保留控件引用供宿主清空
         def __init__(self, area: ChatTextArea) -> None:
             self.text_area = area
             self.value = area.text
@@ -400,6 +414,7 @@ class ChatTextArea(TextArea):
 
     # 输入内容以 / 开头且无空格时发布，query 为 / 之后的字符串（可为空串）；None 表示收起弹窗
     class SlashChanged(Message):
+        # 保存当前斜杠命令查询；None 表示关闭候选框
         def __init__(self, query: str | None) -> None:
             self.query = query
             super().__init__()
@@ -461,6 +476,7 @@ class ChatTextArea(TextArea):
         await super()._on_key(event)
 
 
+# S2 的 Textual 应用主体；当前类内同时包含 S3-S7 的交互增强
 class KamaTuiApp(App[None]):
     """KamaClaude TUI：终端滚屏风格，实时展示 agent 执行过程。"""
 
@@ -492,23 +508,25 @@ class KamaTuiApp(App[None]):
     """
 
     _BANNER = (
-        "[bold cyan]██╗  ██╗ █████╗ ███╗   ███╗ █████╗  ██████╗██╗      █████╗ ██╗   ██╗██████╗ ███████╗[/bold cyan]\n"
-        "[bold cyan]██║ ██╔╝██╔══██╗████╗ ████║██╔══██╗██╔════╝██║     ██╔══██╗██║   ██║██╔══██╗██╔════╝[/bold cyan]\n"
-        "[bold cyan]█████╔╝ ███████║██╔████╔██║███████║██║     ██║     ███████║██║   ██║██║  ██║█████╗  [/bold cyan]\n"
-        "[bold cyan]██╔═██╗ ██╔══██║██║╚██╔╝██║██╔══██║██║     ██║     ██╔══██║██║   ██║██║  ██║██╔══╝  [/bold cyan]\n"
-        "[bold cyan]██║  ██╗██║  ██║██║ ╚═╝ ██║██║  ██║╚██████╗███████╗██║  ██║╚██████╔╝██████╔╝███████╗[/bold cyan]\n"
-        "[bold cyan]╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝  ╚═╝ ╚═════╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝[/bold cyan]\n"
+        "[bold cyan]██╗  ██╗ █████╗ ███╗   ███╗ █████╗  ██████╗██╗      █████╗ ██╗   ██╗██████╗ ███████╗[/bold cyan]\n"  # noqa: E501
+        "[bold cyan]██║ ██╔╝██╔══██╗████╗ ████║██╔══██╗██╔════╝██║     ██╔══██╗██║   ██║██╔══██╗██╔════╝[/bold cyan]\n"  # noqa: E501
+        "[bold cyan]█████╔╝ ███████║██╔████╔██║███████║██║     ██║     ███████║██║   ██║██║  ██║█████╗  [/bold cyan]\n"  # noqa: E501
+        "[bold cyan]██╔═██╗ ██╔══██║██║╚██╔╝██║██╔══██║██║     ██║     ██╔══██║██║   ██║██║  ██║██╔══╝  [/bold cyan]\n"  # noqa: E501
+        "[bold cyan]██║  ██╗██║  ██║██║ ╚═╝ ██║██║  ██║╚██████╗███████╗██║  ██║╚██████╔╝██████╔╝███████╗[/bold cyan]\n"  # noqa: E501
+        "[bold cyan]╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝  ╚═╝ ╚═════╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝[/bold cyan]\n"  # noqa: E501
         "[dim]  输入消息开始对话  ·  键入 / 触发 skill  ·  Ctrl+C 退出[/dim]"
     )
 
-    # 初始化连接参数和 TUI 内部状态
+    # 初始化连接参数和 TUI 状态；host/port/replay_run_id 是原始 S2 字段
     def __init__(self, host: str, port: int, replay_run_id: str | None = None) -> None:
         super().__init__()
         self._host = host
         self._port = port
         self._replay_run_id = replay_run_id
         self._client: SocketClient | None = None
+        # 原始 S2 用 _token_buf 延迟整行写入；当前 main 改为一个可持续更新的 widget。
         self._current_llm: LLMStreamBlock | None = None
+        # ---------------- S3-S7：工具块、会话输入、权限和 subagent 状态 ----------------
         self._pending_tool_blocks: dict[str, ToolCallBlock] = {}
         self._pending_permission_blocks: dict[str, PermissionBlock] = {}
         self._session_id: str | None = None
@@ -518,11 +536,13 @@ class KamaTuiApp(App[None]):
         self._subagent_run_ids: dict[str, str] = {}  # child run_id -> description
         self._subagent_start_times: dict[str, float] = {}  # child run_id -> start time
 
+    # 声明当前 main 的顶部状态、滚动日志与输入框；原始 S2 没有输入框
     def compose(self) -> ComposeResult:
         yield Label("[bold]KamaClaude[/bold]  [dim]connecting...[/dim]", id="header")
         yield VerticalScroll(id="log-view")
         yield ChatTextArea(id="prompt", show_line_numbers=False)
 
+    # widget 挂载后启动 Textual worker；worker 与 App 共用异步事件循环
     def on_mount(self) -> None:
         self._slash_items = self._build_slash_items()
         self._append(Static(self._BANNER, id="banner"))
@@ -774,8 +794,10 @@ class KamaTuiApp(App[None]):
             log.info("connected to %s:%s", self._host, self._port)
             self._client = client
             self._update_header("connecting")
+            # 与 CLI 一样，读循环必须先运行，send_command 的 Future 才能收到响应。
             loop_task = asyncio.create_task(client.run_event_loop())
 
+            # 把异步网络回调适配到同步 widget 更新逻辑
             async def on_event(event: dict[str, Any]) -> None:
                 self._handle_event(event)
 
@@ -805,7 +827,9 @@ class KamaTuiApp(App[None]):
                 }
                 if self._replay_run_id is not None:
                     params["replay_from_run"] = self._replay_run_id
+                # S2 主线：先订阅，再进行任何会产生事件的操作。
                 await client.send_command("event.subscribe", params)
+                # ---------------- S4+：原始 S2 TUI 只观察事件，不创建 chat session ----------------
                 created = await client.send_command("session.create", {"mode": "chat"})
                 self._session_id = str(created["session_id"])
                 log.info("session created session_id=%s", self._session_id)
@@ -842,7 +866,7 @@ class KamaTuiApp(App[None]):
         except Exception:
             log.exception("_handle_event crashed  event_type=%s", event.get("type", "?"))
 
-    # 实际的事件路由逻辑
+    # 实际的事件路由逻辑；run/step/tool/llm/log 是 S2，其他事件来自后续阶段
     def _handle_event_inner(self, event: dict[str, Any]) -> None:
         t = event.get("type", "")
 
@@ -857,6 +881,7 @@ class KamaTuiApp(App[None]):
 
         self._break_llm()
 
+        # ---------------- S4+：会话状态，学习 S2 可跳到 run.started ----------------
         if t == "session.waiting_for_input":
             self._busy = False
             prompt = self._prompt()
@@ -876,6 +901,7 @@ class KamaTuiApp(App[None]):
                 prompt.border_title = "session closed"
             self._update_header("disconnected")
 
+        # ---------------- S2：从 daemon 事件流渲染运行、步骤、工具与用量 ----------------
         elif t == "run.started":
             run_id = event.get("run_id", "")
             goal = event.get("goal", "")
@@ -884,6 +910,7 @@ class KamaTuiApp(App[None]):
                 classes="run-header",
             ))
 
+        # ---------------- S7+：Skill/Subagent，学习 S2 可跳到 step.started ----------------
         elif t == "skill.invoked":
             skill_name = event.get("skill_name", "")
             arguments = event.get("arguments", "")
@@ -992,6 +1019,7 @@ class KamaTuiApp(App[None]):
                 classes="usage",
             ))
 
+        # ---------------- S5-S6：compact 与权限，学习 S2 可跳到 log.line ----------------
         elif t == "context.compacted":
             orig = event.get("original_tokens", 0)
             summary = event.get("summary_tokens", 0)
@@ -1023,10 +1051,14 @@ class KamaTuiApp(App[None]):
             self._append(perm_block)
             select = PermissionSelect(tool_use_id)
             self._mount_permission_select(select)
-            log.debug("PermissionSelect mounted before #prompt  pending=%d", len(self._pending_permission_blocks))
+            log.debug(
+                "PermissionSelect mounted before #prompt  pending=%d",
+                len(self._pending_permission_blocks),
+            )
 
         elif t == "permission.denied":
-            # 处理超时或断连等非用户交互触发的 deny（用户主动 deny 已由 on_permission_select_decided 处理）
+            # 处理超时或断连等非用户交互触发的 deny
+            # 用户主动 deny 已由 on_permission_select_decided 处理
             tool_use_id = str(event.get("tool_use_id", ""))
             decision = str(event.get("decision", "denied"))
             if tool_use_id in self._pending_permission_blocks:

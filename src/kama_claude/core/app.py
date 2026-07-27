@@ -55,6 +55,13 @@ logger = logging.getLogger(__name__)
 # CoreApp 是 daemon 的“总装配入口”：它创建各组件并把 method 注册到 SocketServer。
 # 当前 main 已发展到 S7，因此本文件很长；学习 S0 时只跟这条线：
 # get_config → setup_logging → SocketServer → register("core.ping") → start → stop。
+#
+# S2 再精读四个接缝：
+# 1. daemon 级 EventBus 与 IpcEventBroadcaster 的接线；
+# 2. agent.run 收到命令后后台启动任务并立即返回 run_id；
+# 3. event.subscribe 通过当前连接 writer 建立订阅，并可先回放 events.jsonl；
+# 4. SocketServer 注册 agent.run 与 event.subscribe。
+# Session、Permission、MCP、compact、trace 都是当前 main 的后续阶段扩展。
 
 # 生成事件和 trace 使用的 UTC 时间戳
 def _now() -> str:
@@ -78,14 +85,18 @@ def _register_shutdown_signal(
 
 
 class CoreApp:
-    # 初始化 daemon 运行期状态；S0 真正会用到的只有 _start_time
+    # 初始化 daemon 运行期状态；_bus/_broadcaster/_running_runs 是 S2 主线
     def __init__(self) -> None:
         self._start_time = time.monotonic()
+        # EventBus 活多久取决于 CoreApp，而不是某次 CLI 命令；这使多客户端能共享事件源。
         self._bus = EventBus()
         self._broadcaster: IpcEventBroadcaster | None = None
+        # ---------------- S3+：trace；学习 S2 可先忽略 ----------------
         self._trace: TraceWriter | None = None
         self._config: KamaConfig | None = None
+        # 真实 stage/s2 只有 _current_run_task；当前集合是后续多 run 与优雅关闭增强。
         self._running_runs: set[asyncio.Task[Any]] = set()
+        # ---------------- S4-S7：会话、权限与 MCP，学习 S2 可跳过 ----------------
         self._sessions: SessionManager | None = None
         self._permission_manager: PermissionManager | None = None
         self._mcp_manager: McpServerManager | None = None
@@ -118,8 +129,10 @@ class CoreApp:
             )
         )
 
-    # 启动一次 agent run：异步创建 AgentRunner 并立即返回 run_id
+    # 兼容 S2 agent.run 协议：后台启动一次任务并立即返回 run_id
     async def _agent_run_handler(self, params: dict[str, Any]) -> AgentRunResult:
+        # 真实 S2 在这里直接 AgentRunner(..., bus=self._bus).run(...)，且只允许一个活跃 run。
+        # 当前 main 从 S4 起把一次性目标包装成 one_shot session，核心“daemon 执行”边界未变。
         assert self._sessions is not None
         cmd = AgentRunCommand.model_validate(params)
         session = await self._sessions.create(mode="one_shot", title=cmd.goal[:40])
@@ -179,13 +192,15 @@ class CoreApp:
         await self._sessions.close(cmd.session_id)
         return SessionCloseResult(status="closed")
 
-    # 注册客户端事件订阅，可选先回放 events.jsonl 历史再接收实时流
+    # S2：注册客户端事件订阅，可选先回放 events.jsonl 历史再接收实时流
     async def _subscribe_handler(self, params: dict[str, Any]) -> EventSubscribeResult:
         cmd = EventSubscribeCommand.model_validate(params)
+        # writer 不在统一的 handler(params) 参数里，由 SocketServer 的 ContextVar 提供。
         writer = get_connection_writer()
 
         replayed_count = 0
         if cmd.replay_from_run is not None:
+            # 真实代码顺序是“先回放，后注册实时订阅”；对已结束 run 很直观。
             replayed_count = await self._replay_events(
                 cmd.replay_from_run, writer, cmd.topics
             )
@@ -194,15 +209,17 @@ class CoreApp:
         sub_id = self._broadcaster.subscribe(writer, cmd.topics, cmd.scope)
         return EventSubscribeResult(subscription_id=sub_id, replayed_count=replayed_count)
 
-    # 从 events.jsonl 向 writer 回放匹配 topic 的历史事件，返回已回放条数
+    # S2：从 events.jsonl 回放匹配 topic 的历史事件，返回已推送条数
     async def _replay_events(
         self,
         run_id: str,
         writer: asyncio.StreamWriter,
         topics: list[str],
     ) -> int:
+        # 先尝试 S1/S2 的 .kama/runs/<run_id>；当前 main 再兼容 S4 session 目录。
         path = events_file(run_id)
         if not path.exists():
+            # ---------------- S4+：session/runs 路径兼容，原始 S2 没有 ----------------
             for candidate in Path(".kama/sessions").glob(
                 f"*/runs/{run_id}/events.jsonl"
             ):
@@ -212,6 +229,7 @@ class CoreApp:
             return 0
 
         count = 0
+        # 历史事件与实时事件使用同一个 EventPushEnvelope，客户端无需两套解析逻辑。
         for line in path.read_text().splitlines():
             if not line:
                 continue
@@ -237,13 +255,14 @@ class CoreApp:
         self._config = get_config()
         setup_logging(self._config)
 
-        # ---------------- S1-S7 初始化：学习 S0 时先跳到 SocketServer ----------------
+        # ---------------- S3+ trace：学习 S2 可跳过 ----------------
         if self._config.trace.enabled:
             trace_path = Path(self._config.trace.file).expanduser()
             self._trace = TraceWriter(trace_path)
             await self._trace.start()
             self._bus.subscribe(self._trace_event_handler)
 
+        # ---------------- S5+ 权限：学习 S2 可跳过 ----------------
         policy_file = Path(".kama/policy.toml")
         self._permission_manager = PermissionManager(
             policy_file=policy_file,
@@ -255,18 +274,23 @@ class CoreApp:
             len(load_policy_file(policy_file)),
         )
 
+        # ---------------- S2 核心接线：同一事件同时拥有 IPC 观察者 ----------------
         self._broadcaster = IpcEventBroadcaster(trace=self._trace)
         self._bus.subscribe(self._broadcaster.handle)
+
+        # ---------------- S4+ Session：替代原始 S2 直接创建 AgentRunner ----------------
         sessions_root = Path(".kama/sessions")
         store = SessionStore(sessions_root)
         assert self._config is not None
         compact_provider = AnthropicProvider(self._config.llm.default_model)
 
+        # ---------------- S7+ MCP：学习 S2 可跳过 ----------------
         self._mcp_manager = McpServerManager()
         if self._config.mcp.servers:
             logger.info("mcp: starting %d server(s)", len(self._config.mcp.servers))
             await self._mcp_manager.start_all(self._config.mcp.servers)
 
+        # runner_factory 中仍把 S2 的 daemon 级 EventBus 注入每个 AgentRunner。
         self._sessions = SessionManager(
             store,
             runner_factory=lambda: AgentRunner(
@@ -287,10 +311,11 @@ class CoreApp:
             self._broadcaster,
             trace=self._trace,
         )
-        # S0 只有这一条路由；其他 register 调用均为后续阶段新增。
+        # S0 只有 core.ping；S2 新增 agent.run 与 event.subscribe。
         server.register("core.ping", self._ping_handler)
         server.register("agent.run", self._agent_run_handler)
         server.register("event.subscribe", self._subscribe_handler)
+        # ---------------- S4-S6：后续协议，学习 S2 到这里即可 ----------------
         server.register("session.create", self._session_create_handler)
         server.register("session.send_message", self._session_send_handler)
         server.register("session.get_history", self._session_history_handler)
@@ -311,8 +336,9 @@ class CoreApp:
 
         await shutdown.wait()
 
-        # ---------------- S0 步骤 5：释放资源并停止监听 ----------------
+        # ---------------- 释放资源并停止监听 ----------------
         logger.info("shutting down")
+        # 当前 main 会显式取消并等待任务；原始 S2 没有这段完整的优雅收尾。
         for run_task in list(self._running_runs):
             run_task.cancel()
         if self._running_runs:

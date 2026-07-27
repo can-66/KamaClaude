@@ -9,11 +9,11 @@ from typing import Any
 from kama_claude.core.config import KamaConfig
 from kama_claude.core.transport.socket_client import IpcError, SocketClient
 
-# S1 学习提示：
-# StdoutPrinter 是 S1 就有的“事件 → 终端文字”适配器，值得精读。
-# 原始 S1 的 handle 接收 Pydantic 事件并用 isinstance 分发；当前 dict/type 写法来自 S2 IPC。
-# 真实 stage/s1 的 cmd_run 会在本进程直接创建 AgentRunner；当前 main 从 S2 起改为
-# SocketClient 连接 daemon，所以 _run_async 的订阅和 IPC 细节现在只需知道用途。
+# S2 的 CLI 主线：
+# stage/s1 在本进程创建 AgentRunner；stage/s2 改为 SocketClient 连接 daemon，
+# 先 event.subscribe，再 agent.run，最后等待同一连接推来的 run.finished。
+# StdoutPrinter 这个“事件 → 文字”的职责来自 S1，但接收 Pydantic Event 改成 dict
+# 正是事件越过 IPC 边界后的 S2 变化。当前 main 基本保留了这条 S2 客户端链路。
 
 
 # 把结构化运行事件翻译成适合人阅读的终端输出
@@ -31,7 +31,7 @@ class StdoutPrinter:
             print()
             self._inline = False
 
-    # 当前 main 根据 dict 的 type 字段分发；原始 S1 在同一位置用 isinstance
+    # 根据网络事件 dict 的 type 字段分发；原始 S1 在同一位置用 isinstance
     async def handle(self, event: dict[str, Any]) -> None:
         t = event.get("type", "")
 
@@ -73,7 +73,7 @@ class StdoutPrinter:
 
 # 异步核心：连接 daemon，订阅事件，触发 run，等待 run.finished
 async def _run_async(goal: str, config: KamaConfig) -> int:
-    # ---------------- S2+ IPC 包装：理解 S1 时可先跳到 cmd_run ----------------
+    # SocketClient 只在 CLI 进程中收发消息；AgentRunner 已搬到 daemon。
     client = SocketClient(config.host, config.port)
     try:
         await client.connect()
@@ -82,6 +82,7 @@ async def _run_async(goal: str, config: KamaConfig) -> int:
         return 1
 
     printer = StdoutPrinter()
+    # finished 是协程之间的一次性信号，不携带最终结果数据。
     finished = asyncio.Event()
     exit_code = 0
 
@@ -107,6 +108,7 @@ async def _run_async(goal: str, config: KamaConfig) -> int:
                 "scope": "global",
             },
         )
+        # RPC 很快返回 run_id；任务完成要继续等后面的 run.finished 推送。
         await client.send_command("agent.run", {"goal": goal})
     except IpcError as e:
         print(f"error: {e}", file=sys.stderr)
@@ -114,7 +116,8 @@ async def _run_async(goal: str, config: KamaConfig) -> int:
         await client.close()
         return 1
 
-    # 这里等的是事件流中的 run.finished，不是 agent.run 命令的即时 RPC 响应。
+    # 原始 S2 daemon 同时只跑一个 run，所以 global scope 不会串到别的任务。
+    # 当前 main 已允许更多运行形态；这种历史假设会在 S2 指南的代码边界中说明。
     await finished.wait()
 
     loop_task.cancel()

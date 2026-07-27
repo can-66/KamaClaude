@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 # “信封”只描述消息怎么包装，不关心 core.ping 具体做什么。
 # 可以把它类比成快递单：id 是单号，method 是收件部门，params/result 是包裹内容。
+# S2 的关键新增是 EventPushEnvelope：同一条 TCP 连接既回 JSON-RPC 响应，也收 daemon 主动事件。
 
 # 客户端发给 daemon 的 JSON-RPC 请求外壳
 class JsonRpcRequest(BaseModel):
@@ -15,10 +16,10 @@ class JsonRpcRequest(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)  # 本次调用的业务参数
 
 
-# S2 以后用于 daemon 主动向客户端推送事件；学习 S0 时先跳过
+# S2 用于 daemon 主动向客户端推送事件；kind 让 SocketClient 能与 JSON-RPC 响应分流
 class EventPushEnvelope(BaseModel):
-    kind: Literal["event"] = "event"
-    event: dict[str, Any]  # Event.model_dump() 的序列化结果
+    kind: Literal["event"] = "event"  # 推送没有请求 id，靠该固定值识别
+    event: dict[str, Any]  # Pydantic Event 经 model_dump() 后的网络形态
 
 
 # handler 正常完成时，daemon 返回的成功外壳

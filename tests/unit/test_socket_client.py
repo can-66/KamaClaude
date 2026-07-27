@@ -8,7 +8,10 @@ import pytest
 
 from kama_claude.core.transport.socket_client import IpcError, SocketClient
 
+# 本文件用临时 asyncio server 充当最小 daemon，只验证 S2 SocketClient 的混合流分发。
+# 它不验证 CoreApp、AgentRunner 或事件落盘，这些属于集成测试职责。
 
+# 在系统分配的随机端口启动 mock server，并把实际端口返回给客户端
 async def _start_mock_server(
     handler: Any,
 ) -> tuple[asyncio.Server, int]:
@@ -18,9 +21,9 @@ async def _start_mock_server(
 
 
 # 功能：验证 send_command 向 mock server 发送 JSON-RPC 请求并正确解析响应 result
-# 设计：用 asyncio.start_server + port 0 启动内存中的 mock server，避免依赖真实 daemon；
-#       loop_task 并发运行 run_event_loop，使 send_command 的 future 能被 _dispatch 解析
+# 设计：随机端口 mock server 返回同 id 响应，并发读循环负责 resolve send_command 创建的 Future
 async def test_send_command_returns_result() -> None:
+    # 读取一条请求后返回同 id 的成功响应
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         line = await reader.readline()
         req = json.loads(line)
@@ -49,6 +52,7 @@ async def test_send_command_returns_result() -> None:
 # 功能：验证 server 返回 JSON-RPC error 时 send_command 抛出 IpcError 并携带正确错误码
 # 设计：mock server 返回 error 对象（code=-32601），断言异常类型和 code 属性，确认客户端的错误路径处理
 async def test_send_command_raises_ipc_error() -> None:
+    # 返回同 id 的 JSON-RPC error，触发客户端 Future 的异常路径
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         line = await reader.readline()
         req = json.loads(line)
@@ -80,12 +84,12 @@ async def test_send_command_raises_ipc_error() -> None:
 
 
 # 功能：验证 server 推送 kind=event 的消息时，on_event 注册的 handler 能收到 event 字典
-# 设计：server 先返回 RPC 响应（解除 send_command 的等待），再推送事件；用 asyncio.Event 等待 handler 被调用，
-#       避免 sleep 轮询；断言 event 内容中的 type 字段是否正确
+# 设计：mock server 在同一连接依次写响应和推送，用 Event 等回调而非 sleep，再断言 event.type
 async def test_event_push_routed_to_handler() -> None:
     received_events: list[dict[str, Any]] = []
     push_done = asyncio.Event()
 
+    # 先回复订阅命令，再在同一连接主动推送 kind=event
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         line = await reader.readline()
         req = json.loads(line)
@@ -101,6 +105,7 @@ async def test_event_push_routed_to_handler() -> None:
     async with server:
         client = SocketClient("127.0.0.1", port)
 
+        # 收集推送内容并发信号，避免靠固定 sleep 猜测到达时间
         async def collect(event_data: dict[str, Any]) -> None:
             received_events.append(event_data)
             push_done.set()
@@ -123,9 +128,9 @@ async def test_event_push_routed_to_handler() -> None:
 
 
 # 功能：验证 server 关闭连接后 run_event_loop 正常退出（不挂起）
-# 设计：mock server 立即关闭写流，client readline 收到空字节后退出循环；
-#       用 asyncio.wait_for 设置超时，防止 loop 意外挂起导致测试卡死
+# 设计：mock server 建连后立即关闭，让 readline 得到 EOF，并用 wait_for 防回归时测试永久挂起
 async def test_run_event_loop_exits_on_server_close() -> None:
+    # 接受连接后立即关闭，使客户端 readline() 得到 EOF
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         writer.close()
         await writer.wait_closed()

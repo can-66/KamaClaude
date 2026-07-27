@@ -161,7 +161,13 @@ class AnthropicProvider:
                 )
             elif block.type == "thinking":
                 # S7+：thinking 必须原样放回下一次请求，否则扩展思考签名会失效。
-                thinking_blocks.append({"type": "thinking", "thinking": block.thinking, "signature": block.signature})
+                thinking_blocks.append(
+                    {
+                        "type": "thinking",
+                        "thinking": block.thinking,
+                        "signature": block.signature,
+                    }
+                )
 
         return LlmResponse(
             stop_reason=final_message.stop_reason or "end_turn",

@@ -8,23 +8,33 @@ from typing import Any
 
 from kama_claude.core.bus.envelope import JsonRpcRequest
 
+# S2 的客户端传输层：在一条 TCP/NDJSON 连接上同时处理“命令响应”和“事件推送”。
+# send_command() 用 Future 等指定 id 的响应，run_event_loop() 则是唯一读者并负责分流。
+
+# 事件回调接收已经反序列化的普通 dict；网络边界之后不再是 Pydantic Event 对象
 type EventHandler = Callable[[dict[str, Any]], Awaitable[None]]
 
-_MAX_LINE_BYTES = 64 * 1024 * 1024  # 64 MB per frame，兼容 MCP 大文件工具结果
+# 当前 main 为 S7 MCP 大结果放宽到 64 MB；原始 S2 是 1 MB，协议原理不变
+_MAX_LINE_BYTES = 64 * 1024 * 1024
 
 
+# 把 JSON-RPC error 转成客户端可捕获的 Python 异常
 class IpcError(RuntimeError):
+    # 保存机器可判断的错误码，同时构造便于终端显示的消息
     def __init__(self, code: int, message: str) -> None:
         super().__init__(f"[{code}] {message}")
         self.code = code
 
 
+# 维护到 kama-core 的单条长连接，并把混合消息流路由给正确等待者
 class SocketClient:
+    # 保存连接状态、待完成请求和事件回调；构造时尚未真正连接网络
     def __init__(self, host: str, port: int) -> None:
         self._host = host
         self._port = port
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
+        # key 是请求 id，value 是 send_command() 正在 await 的“未来结果”。
         self._pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._event_handlers: list[EventHandler] = []
 
@@ -39,12 +49,14 @@ class SocketClient:
         if self._writer is not None:
             self._writer.close()
             try:
+                # 防止异常网络状态让 CLI/TUI 永久卡在关闭阶段。
                 await asyncio.wait_for(self._writer.wait_closed(), timeout=1.0)
             except TimeoutError:
                 pass
 
     # 注册服务器推送事件的回调，可多次调用以添加多个 handler
     def on_event(self, handler: EventHandler) -> None:
+        # _dispatch 会按注册顺序逐个 await；慢 handler 也会暂缓后续网络读取。
         self._event_handlers.append(handler)
 
     # 发送 JSON-RPC 命令并等待响应，成功返回 result dict，失败抛出 IpcError
@@ -53,10 +65,12 @@ class SocketClient:
             raise RuntimeError("not connected — call connect() first")
         req_id = str(uuid.uuid4())
         request = JsonRpcRequest(id=req_id, method=method, params=params)
+        # 先登记 Future 再发送，避免极快响应到达时还找不到对应等待者。
         fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
         self._pending[req_id] = fut
         self._writer.write(request.model_dump_json().encode() + b"\n")
         await self._writer.drain()
+        # 这里能被唤醒的前提是 run_event_loop() 已在另一个 task 中持续读消息。
         return await fut
 
     # 持续读取服务器消息，分发 RPC 响应到 pending future 或事件到 event handler
@@ -70,12 +84,13 @@ class SocketClient:
                 except (ConnectionResetError, OSError):
                     break
                 except (ValueError, asyncio.LimitOverrunError):
-                    # 单行超出 limit；丢弃本行，继续读取后续消息
+                    # 当前 main 的后续健壮性处理；原始 S2 没有这一分支。
                     continue
                 if not line:
                     break
                 await self._dispatch(line)
         finally:
+            # 连接结束后取消所有无望收到响应的请求，不能让调用方永远 await。
             for fut in self._pending.values():
                 if not fut.done():
                     fut.cancel()
@@ -86,9 +101,11 @@ class SocketClient:
         try:
             msg: dict[str, Any] = json.loads(line)
         except json.JSONDecodeError:
+            # 客户端无法给无 id 的坏推送回错误响应，只能忽略该行并继续读。
             return
 
         if "jsonrpc" in msg:
+            # JSON-RPC 响应：用 id 找到 send_command() 创建的 Future。
             req_id: str | None = msg.get("id")
             if req_id and req_id in self._pending:
                 fut = self._pending.pop(req_id)
@@ -101,6 +118,7 @@ class SocketClient:
                     else:
                         fut.set_result(msg.get("result") or {})
         elif msg.get("kind") == "event":
+            # daemon 主动推送：没有请求 id，直接交给所有事件 handler。
             event_data: dict[str, Any] = msg.get("event", {})
             for handler in self._event_handlers:
                 await handler(event_data)
