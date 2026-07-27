@@ -39,11 +39,17 @@ from kama_claude.core.tools.registry import ToolRegistry
 from kama_claude.core.trace.provider import TracingProvider
 from kama_claude.core.trace.writer import TraceWriter
 
+# AgentRunner 是 S1 的“总装配层”：创建 run_id、EventBus、Provider、工具与 AgentLoop，
+# 并保证 run.started / run.finished 与 events.jsonl 首尾闭合。
+# 当前 main 同一文件还承载 Session、任务工具、权限、compact、Subagent、MCP、trace；
+# 阅读 S1 时先抓住上面的最小职责，遇到阶段分界即可跳过。
 
+# 返回运行事件使用的 UTC ISO 8601 时间戳
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+# 当前 main 返回给 Session/Subagent 的结果对象；原始 S1 的 run() 不返回业务值
 @dataclass
 class RunOutcome:
     status: str
@@ -51,6 +57,7 @@ class RunOutcome:
     reason: str | None
 
 
+# 组装并驱动一次 Agent 运行，自己不实现 LLM 推理或具体工具逻辑
 class AgentRunner:
     # 组装所有运行时依赖，准备执行一次完整的 agent run
     def __init__(
@@ -66,6 +73,7 @@ class AgentRunner:
         mcp_manager: McpServerManager | None = None,
     ) -> None:
         self._config = config
+        # 原始 S1 总是内部新建 bus；S2 起允许 daemon 注入全局 bus 以向客户端广播。
         self._bus = bus
         self._provider = provider
         self._extra_handlers: list[EventHandler] = extra_handlers or []
@@ -73,8 +81,10 @@ class AgentRunner:
         self._trace = trace
         self._permission_manager = permission_manager
         self._mcp_manager = mcp_manager
-        # 跨 run 共享的后台 subagent 任务注册表
+        # S7+：跨 run 共享的后台 subagent 任务注册表。
         self._task_registry = BackgroundTaskRegistry()
+
+    # ---------------- S3-S7 工具扩展：原始 S1 仅 register(ReadFileTool()) ----------------
 
     # 构建工具注册表，注入 TaskManager（任务工具共享同一实例）；可选注入 SpawnAgentTool
     def _build_registry(
@@ -92,6 +102,7 @@ class AgentRunner:
     ) -> ToolRegistry:
         allowed: set[str] | None = set(tool_whitelist) if tool_whitelist else None
 
+        # 判断工具是否在可选白名单内；None 表示全部允许注册
         def _ok(name: str) -> bool:
             return allowed is None or name in allowed
 
@@ -150,22 +161,28 @@ class AgentRunner:
         system_prompt_override: str | None = None,
         tool_whitelist: list[str] | None = None,
     ) -> RunOutcome:
+        # 不传 run_id 时在总装配边界生成，之后所有事件与目录都复用它。
         run_id = run_id or new_run_id()
         if session is not None and store is not None:
+            # ---------------- S4+：session 历史与目录；S1 走下面的 else ----------------
             run_path = store.runs_dir(session.id) / run_id
             history = store.read_messages(session.id)
             notes = store.read_notes(session.id)
         else:
+            # 这是最接近原始 S1 的路径：单次 goal 形成第一条 user 消息。
             run_path = self._runs_dir / run_id
             history = [{"role": "user", "content": goal}]
             notes = ""
         run_path.mkdir(parents=True, exist_ok=True)
 
+        # ---------------- S4+ 分层记忆：原始 S1 没有 context 文件 ----------------
         global_ctx = load_context_file(Path(".kama/global/context.md"))
         project_ctx = load_context_file(Path(".kama/context.md"))
 
+        # S3+ 任务系统；S1 的注册表只有 read_file，不需要 TaskManager。
         task_manager = TaskManager(run_path / ".tasks")
 
+        # S1 内部创建 EventBus；当前 daemon 注入全局 bus 时会复用同一实例。
         bus = self._bus if self._bus is not None else EventBus()
         for h in self._extra_handlers:
             bus.subscribe(h)
@@ -182,6 +199,7 @@ class AgentRunner:
         )
         prefill_len = len(history)
 
+        # ---------------- 下方是 S1 主干：事件文件、生命周期事件、Provider、Loop ----------------
         async with EventWriter(run_path / "events.jsonl") as writer:
             writer.subscribe(bus)
             await bus.publish(RunStartedEvent(run_id=run_id, goal=goal, ts=_now()))
@@ -191,6 +209,7 @@ class AgentRunner:
                 provider: LLMProvider = self._provider or AnthropicProvider(
                     self._config.llm.default_model
                 )
+                # S3 Trace：用装饰器包 Provider，不改变 AgentLoop 所依赖的协议。
                 if self._trace is not None:
                     provider = TracingProvider(
                         provider,
@@ -203,6 +222,7 @@ class AgentRunner:
                     if session is not None and store is not None
                     else self._runs_dir
                 )
+                # 原始 S1 在这里直接注册 ReadFileTool；当前方法还装配所有后续工具。
                 registry = self._build_registry(
                     task_manager,
                     session=session,
@@ -219,6 +239,7 @@ class AgentRunner:
                     if session is not None and store is not None
                     else run_path
                 )
+                # S6+：compact 通过可选依赖接入，S1 原始 AgentLoop 没有该参数。
                 compactor = Compactor(bus, session_dir, session_id_str)
                 loop = AgentLoop(
                     provider, registry, bus,
@@ -229,6 +250,7 @@ class AgentRunner:
                 )
                 await loop.run(context)
             except asyncio.CancelledError:
+                # 先记住取消，仍继续发布 run.finished 并关闭文件，最后再重新抛出。
                 cancelled = True
                 if not context.is_done():
                     context.mark_failed("cancelled")
@@ -250,6 +272,7 @@ class AgentRunner:
             )
 
         if session is not None and store is not None:
+            # S4+：只追加本次 run 新增的消息，避免重复保存预填历史。
             store.append_messages(session.id, context.messages[prefill_len:], run_id=run_id)
 
         if cancelled:

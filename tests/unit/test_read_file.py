@@ -6,6 +6,8 @@ import pytest
 
 from kama_claude.core.tools.builtin.read_file import ReadFileTool
 
+# 本文件验证 S1 唯一内建工具的正常读取、错误传播和 512KB 输出边界。
+# 注意这些测试会传 tmp_path 的绝对路径，这也暴露了“仅允许相对路径”尚未落实。
 
 # 功能：验证读取存在的文件时返回完整内容且 is_error 为 False
 # 设计：写临时文件后读取，断言 content 和 is_error，覆盖正常路径（happy path）
@@ -31,8 +33,8 @@ async def test_path_traversal_dotdot_raises() -> None:
         await ReadFileTool().invoke({"path": "../secret.txt"})
 
 
-# 功能：验证多级路径中嵌入的 `..` 经过路径规范化后也被正确检测
-# 设计：使用 `"subdir/../../etc/passwd"` 测试路径 resolve 后的深度遍历，确认单层 `..` 过滤不足以覆盖此情况
+# 功能：验证多级路径中任意位置出现的 `..` 都会被正确检测
+# 设计：使用 `"subdir/../../etc/passwd"` 检查 Path.parts 中任一 `..` 都会被拒绝；实现并未调用 resolve
 async def test_path_traversal_nested_raises() -> None:
     with pytest.raises(PermissionError):
         await ReadFileTool().invoke({"path": "subdir/../../etc/passwd"})

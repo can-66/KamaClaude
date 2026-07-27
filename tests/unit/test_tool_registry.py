@@ -3,12 +3,16 @@ from __future__ import annotations
 from kama_claude.core.tools.base import BaseTool, ToolResult
 from kama_claude.core.tools.registry import ToolRegistry
 
+# 本文件验证 S1 ToolRegistry 的双重职责：按名称找实现、向 LLM 导出 schema。
+# 所有工具都是内存 stub，不测试真实 read_file 行为。
 
+# 最小工具 stub，提供注册表所需的全部元数据与 invoke 方法
 class _FakeTool(BaseTool):
     name = "fake"
     description = "A fake tool"
     input_schema: dict[str, object] = {"type": "object", "properties": {}, "required": []}
 
+    # 返回固定成功结果；registry 测试本身不会依赖其内容
     async def invoke(self, params: dict[str, object]) -> ToolResult:
         return ToolResult(content="ok")
 
@@ -48,6 +52,7 @@ def test_multiple_tools_all_appear_in_schemas() -> None:
         description = "Another"
         input_schema: dict[str, object] = {"type": "object", "properties": {}, "required": []}
 
+        # 返回空成功结果，唯一作用是提供第二个工具名
         async def invoke(self, params: dict[str, object]) -> ToolResult:
             return ToolResult(content="")
 
@@ -66,6 +71,7 @@ def test_register_same_name_overwrites() -> None:
         description = "updated"
         input_schema: dict[str, object] = {}
 
+        # 返回空成功结果，测试只关心同名覆盖后的元数据
         async def invoke(self, params: dict[str, object]) -> ToolResult:
             return ToolResult(content="")
 

@@ -5,6 +5,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 # S0 只需知道这些路径辅助函数存在；真正的 run/event 文件会在 S1 以后使用。
+# S1 从这里开始给每次任务分配 run_id，并约定事件文件的位置。
+# 原始 S1 写入 runs/<run_id>/events.jsonl；当前 main 的 daemon 路径通常由
+# SessionStore 改到 .kama/sessions/<session_id>/runs/<run_id>/，但 ID 格式不变。
 RUNS_DIR = Path("runs")
 
 
@@ -21,6 +24,7 @@ def events_file(run_id: str) -> Path:
 
 # 生成格式为 YYYYMMDD-HHMMSS-xxxxxx 的唯一 run ID
 def new_run_id() -> str:
+    # 时间戳便于按目录名定位运行时间，随机后缀避免同一秒启动两次发生冲突。
     ts = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     suffix = uuid.uuid4().hex[:6]
     return f"{ts}-{suffix}"

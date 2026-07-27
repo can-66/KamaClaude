@@ -12,12 +12,17 @@ from kama_claude.core.loop import AgentLoop
 from kama_claude.core.tools.base import BaseTool, ToolResult
 from kama_claude.core.tools.registry import ToolRegistry
 
+# 本文件用固定响应 Provider 和极小工具隔离测试 S1 AgentLoop 状态机。
+# 不关心 SDK、磁盘或 CLI，只观察 context、工具结果和 step 事件。
+
 # --- stubs -------------------------------------------------------------------
 
 
+# 按顺序返回预设 LlmResponse，也可在第一步直接抛出指定异常
 class _MockProvider:
     """Returns canned responses in order; raises exc immediately if given."""
 
+    # 把响应列表转成迭代器，确保每次 chat 精确消费一个步骤
     def __init__(
         self,
         responses: list[LlmResponse],
@@ -26,6 +31,7 @@ class _MockProvider:
         self._responses = iter(responses)
         self._exc = exc
 
+    # 实现 LLMProvider 的同形状接口，忽略本测试不关心的入参
     async def chat(
         self,
         messages: list[dict[str, object]],
@@ -41,6 +47,7 @@ class _MockProvider:
         return next(self._responses)
 
 
+# 正常工具 stub：把 msg 原样送回循环
 class _EchoTool(BaseTool):
     name = "echo"
     description = "Echoes msg"
@@ -50,15 +57,18 @@ class _EchoTool(BaseTool):
         "required": ["msg"],
     }
 
+    # 返回成功 ToolResult，供正常 tool_use 两步路径使用
     async def invoke(self, params: dict[str, object]) -> ToolResult:
         return ToolResult(content=str(params["msg"]))
 
 
+# 失败工具 stub：验证错误结果回填后循环仍可继续
 class _FailTool(BaseTool):
     name = "fail"
     description = "Always raises"
     input_schema: dict[str, object] = {"type": "object", "properties": {}, "required": []}
 
+    # 每次执行都抛出异常，由 invoke_tool 转成 is_error 结果
     async def invoke(self, params: dict[str, object]) -> ToolResult:
         raise RuntimeError("tool error")
 
@@ -66,14 +76,17 @@ class _FailTool(BaseTool):
 # --- helpers -----------------------------------------------------------------
 
 
+# 创建具有固定 run_id/goal 的独立 ExecutionContext
 def _ctx(max_steps: int = 5) -> ExecutionContext:
     return ExecutionContext(run_id="r1", goal="test goal", max_steps=max_steps)
 
 
+# 快速构造模型请求的 ToolCallBlock
 def _tc(name: str = "echo", inp: dict[str, object] | None = None, uid: str = "t1") -> ToolCallBlock:
     return ToolCallBlock(id=uid, name=name, input=inp or {"msg": "hi"})
 
 
+# 用可选 registry/bus 组装最小 AgentLoop，并把实际 bus 一并返回
 def _make_loop(
     provider: _MockProvider,
     registry: ToolRegistry | None = None,
@@ -83,9 +96,11 @@ def _make_loop(
     return AgentLoop(provider, registry or ToolRegistry(), b), b  # type: ignore[arg-type]
 
 
+# 给 bus 接上收集器并返回随后会被原地追加的列表
 async def _events(bus: EventBus) -> list[BaseModel]:
     collected: list[BaseModel] = []
 
+    # 收集循环发布的所有步骤与工具事件
     async def _h(e: BaseModel) -> None:
         collected.append(e)
 

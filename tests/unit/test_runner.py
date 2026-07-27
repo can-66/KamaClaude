@@ -10,12 +10,17 @@ from kama_claude.core.events.bus import EventBus
 from kama_claude.core.llm.types import LlmResponse, ToolCallBlock
 from kama_claude.core.runner import AgentRunner
 
+# 本文件验证 S1 总装配层是否正确接线并保证 run 事件与 events.jsonl 首尾闭合。
+# 前八个用例对应原始 S1；外部 bus 是 S2，session/note 用例是 S4，应分阶段阅读。
+
 # --- mock provider -----------------------------------------------------------
 
 
+# 最短成功 Provider：第一步就告诉循环任务完成
 class _EndTurnProvider:
     """Immediately returns end_turn; no API calls made."""
 
+    # 返回固定 end_turn，避免单元测试访问真实 Anthropic API
     async def chat(
         self,
         messages: list[dict[str, object]],
@@ -29,12 +34,15 @@ class _EndTurnProvider:
         return LlmResponse(stop_reason="end_turn", text="done")
 
 
+# 永远请求未知工具的 Provider：用于稳定触发 max_steps
 class _LoopingProvider:
     """Always returns tool_use with an unknown tool to exhaust max_steps."""
 
+    # 记录调用次数，既生成唯一 tool_use_id 也供测试反推步数
     def __init__(self) -> None:
         self._call = 0
 
+    # 每一步都返回 tool_use，使循环只能由 max_steps 结束
     async def chat(
         self,
         messages: list[dict[str, object]],
@@ -50,6 +58,7 @@ class _LoopingProvider:
         return LlmResponse(stop_reason="tool_use", tool_calls=[tc])
 
 
+# S4 测试替身：捕获 session 传给 LLM 的历史和 system prompt
 class _CapturingProvider:
     # 初始化捕获型 provider，保存固定响应
     def __init__(self, response: LlmResponse) -> None:
@@ -76,12 +85,14 @@ class _CapturingProvider:
 # --- helpers -----------------------------------------------------------------
 
 
+# 创建只覆盖 max_steps 的测试配置
 def _config(max_steps: int = 5) -> KamaConfig:
     cfg = KamaConfig()
     cfg.agent.max_steps = max_steps
     return cfg
 
 
+# 在 tmp_path 中运行一次最小 AgentRunner，并收集 EventBus 事件
 async def _run(
     goal: str = "test goal",
     *,
@@ -91,6 +102,7 @@ async def _run(
 ) -> list[BaseModel]:
     collected: list[BaseModel] = []
 
+    # extra_handler 收集事件，不参与业务决策
     async def _collect(e: BaseModel) -> None:
         collected.append(e)
 
@@ -164,10 +176,11 @@ async def test_run_creates_run_subdirectory(tmp_path: Path) -> None:
 
 
 # 功能：验证通过 extra_handlers 注入的回调能收到所有事件
-# 设计：注入第二个收集器，确认 extra_handlers 机制有效；这是测试代码注入 mock 观察器、生产代码接入 StdoutPrinter 的同一扩展点
+# 设计：注入收集器并断言至少收到事件，证明扩展点已接线；事件完整性由其他首尾用例验证
 async def test_extra_handlers_receive_events(tmp_path: Path) -> None:
     secondary: list[BaseModel] = []
 
+    # 第二个观察者只记录事件，不改变 runner 行为
     async def _second(e: BaseModel) -> None:
         secondary.append(e)
 
@@ -200,15 +213,17 @@ async def test_run_id_embedded_in_started_event(tmp_path: Path) -> None:
     assert len(started.run_id) > 0  # type: ignore[attr-defined]
 
 
+# ---------------- S2+：原始 S1 学习到这里可以先停 ----------------
+
 # 功能：验证注入外部 EventBus 时，runner 使用该 bus 而不自建，外部订阅者能收到所有事件
-# 设计：显式传入 EventBus 实例并订阅收集器，确认 runner 不再内部新建 bus（否则外部订阅者收不到事件）；
-#       这是 CoreApp 注入全局 bus 的核心行为，单元测试级别验证可避免集成测试的守护进程依赖
+# 设计：传入 EventBus 并订阅收集器；若 runner 仍内部新建 bus，外部订阅者就收不到事件
 async def test_injected_bus_receives_events(tmp_path: Path) -> None:
     from kama_claude.core.events.bus import EventBus
 
     external_bus = EventBus()
     collected: list[object] = []
 
+    # 收集 daemon 注入的共享 bus 上收到的事件
     async def collect(e: object) -> None:
         collected.append(e)
 

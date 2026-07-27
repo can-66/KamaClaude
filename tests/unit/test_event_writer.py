@@ -10,6 +10,8 @@ from kama_claude.core.bus.events import RunFinishedEvent, RunStartedEvent
 from kama_claude.core.events.bus import EventBus
 from kama_claude.core.events.writer import EventWriter
 
+# 本文件用真实临时文件验证 S1 events.jsonl 的生命周期与容错边界。
+# tmp_path 保证所有产物留在 pytest 隔离目录，不污染项目真实 runs。
 
 # 功能：验证 handle 后事件被正确序列化为单行 JSONL 写入磁盘
 # 设计：使用真实文件（tmp_path）而非 mock，因为 EventWriter 的核心职责是磁盘写入，只有实际读取文件内容才能证明写入正确
@@ -82,8 +84,8 @@ async def test_event_writer_handle_when_not_open_is_noop(tmp_path: Path) -> None
     await writer.handle(event)  # _file is None, should not raise
 
 
-# 功能：验证磁盘写入失败时只记录 ERROR 日志、不向上传播异常
-# 设计：手动关闭已打开的文件句柄触发 OSError，用 caplog 断言 ERROR 级别日志；EventWriter 的契约是"不因写文件失败终止 agent"
+# 功能：验证关闭句柄导致写入失败时只记录 ERROR 日志、不向上传播异常
+# 设计：手动关闭仍被 writer 引用的句柄触发 ValueError，用 caplog 验证观测失败不会终止 agent
 async def test_event_writer_oserror_is_logged(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

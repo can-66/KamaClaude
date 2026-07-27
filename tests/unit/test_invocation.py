@@ -10,13 +10,18 @@ from kama_claude.core.tools.base import BaseTool, ToolResult
 from kama_claude.core.tools.invocation import invoke_tool
 from kama_claude.core.tools.registry import ToolRegistry
 
+# 本文件把工具实现换成极小 stub，专门验证 invoke_tool 的统一执行边界。
+# 这些核心用例源自 S1；Pydantic 参数模型与重试行为是当前 main 的 S5+ 增强。
+
 # --- stub tools --------------------------------------------------------------
 
 
+# 正常返回输入内容的工具，同时用 Pydantic 模型声明必填参数
 class _EchoParams(BaseModel):
     msg: str
 
 
+# 正常路径 stub：用于观察成功结果和 finished 事件
 class _EchoTool(BaseTool):
     name = "echo"
     description = "Echoes the msg param"
@@ -27,25 +32,30 @@ class _EchoTool(BaseTool):
     }
     params_model = _EchoParams
 
+    # 原样返回 msg，排除真实文件 I/O 对调用包装测试的干扰
     async def invoke(self, params: dict[str, object]) -> ToolResult:
         return ToolResult(content=str(params["msg"]))
 
 
+# 超时路径 stub：休眠时间远大于测试传入的 timeout
 class _SlowTool(BaseTool):
     name = "slow"
     description = "Sleeps forever"
     input_schema: dict[str, object] = {"type": "object", "properties": {}, "required": []}
 
+    # 模拟迟迟不返回的外部工具
     async def invoke(self, params: dict[str, object]) -> ToolResult:
         await asyncio.sleep(60)
         return ToolResult(content="done")
 
 
+# 异常路径 stub：每次调用都抛出可识别的错误
 class _BrokenTool(BaseTool):
     name = "broken"
     description = "Always raises"
     input_schema: dict[str, object] = {"type": "object", "properties": {}, "required": []}
 
+    # 抛出 RuntimeError，验证 invoke_tool 会把异常转换成 ToolResult
     async def invoke(self, params: dict[str, object]) -> ToolResult:
         raise RuntimeError("boom")
 
@@ -53,10 +63,12 @@ class _BrokenTool(BaseTool):
 # --- helpers -----------------------------------------------------------------
 
 
+# 快速构造模型返回的 tool_use 请求
 def _call(name: str, inp: dict[str, object] | None = None, uid: str = "t1") -> ToolCallBlock:
     return ToolCallBlock(id=uid, name=name, input=inp or {})
 
 
+# 为每个用例创建独立 bus，执行调用并同时返回结果与事件
 async def _run(
     registry: ToolRegistry,
     tool_call: ToolCallBlock,
@@ -65,6 +77,7 @@ async def _run(
     bus = EventBus()
     events: list[BaseModel] = []
 
+    # 收集调用包装层发布的生命周期事件
     async def _collect(e: BaseModel) -> None:
         events.append(e)
 

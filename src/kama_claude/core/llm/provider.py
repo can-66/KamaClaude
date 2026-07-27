@@ -13,6 +13,11 @@ from kama_claude.core.bus.events import LlmModelSelectedEvent, LlmTokenEvent, Ll
 from kama_claude.core.events.bus import EventBus
 from kama_claude.core.llm.types import LlmResponse, ToolCallBlock, UsageStats
 
+# 本文件是 S1 的外部系统边界：把项目内部 messages/schema 交给 Anthropic，
+# 再把 SDK 响应整理为 LlmResponse，同时通过 EventBus 广播 token 与用量。
+# 网络流重试、context_pct、thinking block 是当前 main 的后续增强，S1 可先跳过。
+
+# ---------------- S6+：上下文水位与流式重试配置 ----------------
 _MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     "claude-sonnet-4-6": 200_000,
     "claude-haiku-4-5-20251001": 200_000,
@@ -42,6 +47,7 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+# Anthropic SDK 适配器：实现 LLMProvider 约定的 chat() 接口
 class AnthropicProvider:
     # 初始化 Anthropic 客户端；client 可在测试时注入以跳过 API key 检查
     def __init__(self, model: str, client: Any = None) -> None:
@@ -69,6 +75,7 @@ class AnthropicProvider:
             LlmModelSelectedEvent(run_id=run_id, model=self._model, strategy="static", ts=_now())
         )
 
+        # system 使用 content block 形式，cache_control 让相邻步骤复用稳定前缀。
         system_blocks: list[dict[str, object]] = [
             {
                 "type": "text",
@@ -79,6 +86,8 @@ class AnthropicProvider:
 
         tools: list[dict[str, object]] = list(tool_schemas)
         if tools:
+            # 复制最后一个 schema 再加缓存标记，避免修改 ToolRegistry 持有的原字典。
+            # Anthropic 按前缀缓存，只标记最后一项即可覆盖完整工具列表。
             last = dict(tools[-1])
             last["cache_control"] = {"type": "ephemeral"}
             tools = tools[:-1] + [last]
@@ -95,12 +104,13 @@ class AnthropicProvider:
         text_parts: list[str] = []
         final_message: Any = None
 
+        # ---------------- S6+：原始 S1 这里只进行一次 stream 调用 ----------------
         for attempt in range(1, _MAX_STREAM_RETRIES + 1):
             text_parts = []
             try:
                 async with self._client.messages.stream(**kwargs) as stream:
                     async for text in stream.text_stream:
-                        # Only publish token events on the first attempt to avoid TUI duplicates
+                        # 重试会从头生成；只在第一次广播 token，避免终端出现重复前缀。
                         if attempt == 1:
                             await bus.publish(LlmTokenEvent(run_id=run_id, token=text, ts=_now()))
                         text_parts.append(text)
@@ -120,8 +130,10 @@ class AnthropicProvider:
                 )
                 await asyncio.sleep(delay)
 
+        # 成功 break 后一定已取得完整消息；断言把这个循环不变量变成明确的运行时检查。
         assert final_message is not None
 
+        # SDK usage 对缓存字段的支持可能因版本而异，getattr 让缺失字段按 0 处理。
         usage = final_message.usage
         cache_read: int = getattr(usage, "cache_read_input_tokens", 0) or 0
         cache_create: int = getattr(usage, "cache_creation_input_tokens", 0) or 0
@@ -141,13 +153,14 @@ class AnthropicProvider:
 
         tool_calls: list[ToolCallBlock] = []
         thinking_blocks: list[dict[str, object]] = []
+        # 文本已由 text_stream 收集；这里重点提取结构化 tool_use 与后续 thinking block。
         for block in final_message.content:
             if block.type == "tool_use":
                 tool_calls.append(
                     ToolCallBlock(id=block.id, name=block.name, input=dict(block.input))
                 )
             elif block.type == "thinking":
-                # thinking blocks must be passed back verbatim in subsequent requests
+                # S7+：thinking 必须原样放回下一次请求，否则扩展思考签名会失效。
                 thinking_blocks.append({"type": "thinking", "thinking": block.thinking, "signature": block.signature})
 
         return LlmResponse(

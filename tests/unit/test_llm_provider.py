@@ -9,9 +9,13 @@ from kama_claude.core.events.bus import EventBus
 from kama_claude.core.llm.provider import AnthropicProvider
 from kama_claude.core.llm.types import LlmResponse
 
+# 本文件完全伪造 Anthropic stream，不发网络请求，验证 S1 Provider 的翻译与事件职责。
+# MagicMock 模拟 SDK 对象，FakeStream 模拟 async with 和异步 token 迭代器。
+
 # --- helpers -----------------------------------------------------------------
 
 
+# 构造只包含 Provider 会读取字段的 usage 假对象
 def _make_usage(
     input_tokens: int = 100,
     output_tokens: int = 50,
@@ -26,6 +30,7 @@ def _make_usage(
     return u
 
 
+# 构造 Anthropic 最终消息假对象，可注入 stop_reason、content 与 token 用量
 def _make_final(
     stop_reason: str = "end_turn",
     content: list[MagicMock] | None = None,
@@ -40,31 +45,39 @@ def _make_final(
     return msg
 
 
+# 模拟 Anthropic SDK 的流式上下文管理器
 class FakeStream:
     """Minimal async context manager that fakes the anthropic streaming interface."""
 
+    # 保存即将逐段产出的文字和最终完整消息
     def __init__(self, texts: list[str], final: MagicMock) -> None:
         self._texts = texts
         self._final = final
 
+    # 进入 async with 时返回 stream 自身
     async def __aenter__(self) -> FakeStream:
         return self
 
+    # 离开 async with 无额外资源需要释放
     async def __aexit__(self, *args: object) -> None:
         pass
 
     @property
+    # 返回异步生成器，模拟 SDK 每次吐出一段 token 文本
     def text_stream(self):  # type: ignore[return]
+        # 按预设顺序逐段产出文本
         async def _gen():
             for t in self._texts:
                 yield t
 
         return _gen()
 
+    # 返回包含 stop_reason、content、usage 的最终消息
     async def get_final_message(self) -> MagicMock:
         return self._final
 
 
+# 把 FakeStream 接到可注入 client 上，得到不会访问网络的 Provider
 def _make_provider(
     texts: list[str] | None = None,
     stop_reason: str = "end_turn",
@@ -79,6 +92,7 @@ def _make_provider(
     return AnthropicProvider(model="test-model", client=client), client
 
 
+# 创建事件收集器并执行一次 Provider.chat，返回规范化结果与事件序列
 async def _chat(
     provider: AnthropicProvider,
     messages: list[dict[str, object]] | None = None,
@@ -87,6 +101,7 @@ async def _chat(
     collected: list[BaseModel] = []
     bus = EventBus()
 
+    # 收集 Provider 在调用期间广播的 model/token/usage 事件
     async def _collect(e: BaseModel) -> None:
         collected.append(e)
 
@@ -178,7 +193,7 @@ async def test_end_turn_produces_no_tool_calls() -> None:
 
 
 # 功能：验证多个流式 token 被正确拼接为 LlmResponse.text 字段
-# 设计：三段 token 拼接，检查 result.text 完整字符串，因为 StdoutPrinter 消费 text 字段展示最终输出
+# 设计：三段 token 拼接后检查完整字符串；AgentLoop 用它写 assistant 历史和最终结果
 async def test_text_accumulated_from_tokens() -> None:
     provider, _ = _make_provider(texts=["foo", "bar", "baz"])
     result, _ = await _chat(provider)

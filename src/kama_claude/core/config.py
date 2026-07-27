@@ -13,6 +13,9 @@ from dotenv import load_dotenv
 # 2. 同一项配置若在多处出现，越靠后的来源优先级越高。
 #
 # 当前 main 已包含 S1-S7 的配置；S0 只需关注 host、port 和 logging。
+# 继续学习 S1 时：
+# - S1 新增 agent.max_steps 与 llm.default_model；
+# - trace、permission、compaction、mcp 都是后续阶段，学习 S1 时可以跳过。
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 7437
 _DEFAULT_LOG_LEVEL = "INFO"
@@ -33,17 +36,22 @@ class LoggingConfig:
 
 
 # ---------------- S1 及以后新增的配置组：S0 可以先跳过 ----------------
+# S1 先读 Agent 循环与模型选择。
 
+# 限制一次 run 最多调用 LLM 多少步，防止模型一直请求工具而无法结束
 @dataclass
 class AgentConfig:
     max_steps: int = _DEFAULT_MAX_STEPS
 
 
+# 保存 LLM 选择；router 在原始 S1 和当前 main 都没有消费者，非 static 值仍只是预留
 @dataclass
 class LlmConfig:
     default_model: str = _DEFAULT_MODEL
     router: str = "static"  # "static" | "rule_based" (S4) | "cost_budget" (S6)
 
+
+# ---------------- S3+：S1 学习到这里可先跳到 KamaConfig ----------------
 
 @dataclass
 class TraceConfig:
@@ -85,8 +93,9 @@ class KamaConfig:
     host: str = _DEFAULT_HOST  # S0：daemon 监听地址
     port: int = _DEFAULT_PORT  # S0：daemon 监听端口
     logging: LoggingConfig = field(default_factory=LoggingConfig)  # S0：日志配置
-    agent: AgentConfig = field(default_factory=AgentConfig)
-    llm: LlmConfig = field(default_factory=LlmConfig)
+    agent: AgentConfig = field(default_factory=AgentConfig)  # S1：循环步数上限
+    llm: LlmConfig = field(default_factory=LlmConfig)  # S1：模型名称与静态路由
+    # 以下配置组均来自 S1 之后；不会改变理解 S1 最小闭环所需的主线。
     trace: TraceConfig = field(default_factory=TraceConfig)
     permission: PermissionConfig = field(default_factory=PermissionConfig)
     compaction: CompactionConfig = field(default_factory=CompactionConfig)
@@ -167,6 +176,7 @@ def _apply_toml(config: KamaConfig, data: dict[str, Any]) -> None:
                 setattr(config.logging, key, val)
 
     # ---------------- S1 及以后配置：S0 阅读到这里可跳到 _apply_env ----------------
+    # S1 先读 [agent] 与 [llm] 的解析。
     if "agent" in data:
         agent = data["agent"]
         if not isinstance(agent, dict):
@@ -198,6 +208,7 @@ def _apply_toml(config: KamaConfig, data: dict[str, Any]) -> None:
                 raise SystemExit("Config error: llm.router must be a string")
             config.llm.router = val
 
+    # ---------------- S3+：trace / permission / compact / MCP，S1 可跳过 ----------------
     if "trace" in data:
         trace = data["trace"]
         if not isinstance(trace, dict):
@@ -332,6 +343,7 @@ def _apply_env(config: KamaConfig) -> None:
         config.logging.format = log_format
 
     # ---------------- S1 及以后环境变量：S0 学习到这里可以先停 ----------------
+    # S1 先读循环上限与模型名称。
     max_steps_str = os.environ.get("KAMA_MAX_STEPS")
     if max_steps_str is not None:
         try:
@@ -351,6 +363,7 @@ def _apply_env(config: KamaConfig) -> None:
     if default_model is not None:
         config.llm.default_model = default_model
 
+    # ---------------- S3+ 环境变量：S1 学习到这里可以先停 ----------------
     trace_enabled = os.environ.get("KAMA_TRACE_ENABLED")
     if trace_enabled is not None:
         config.trace.enabled = trace_enabled.lower() not in ("0", "false", "no")

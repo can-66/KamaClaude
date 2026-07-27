@@ -4,6 +4,8 @@ import pytest
 
 from kama_claude.cli.commands.run import StdoutPrinter
 
+# 本文件是 S2 为 dict 版 StdoutPrinter 补的测试，不属于原始 S1 文件集。
+# 但它验证的“把 S1 事件流实时展示给人看”概念仍值得在读完 S1 主线后回看。
 
 # 功能：验证 run.started 事件在 stdout 中打印 [run] 前缀和 run_id
 # 设计：用 capsys 捕获 stdout，直接断言关键字符串，避免对格式细节过度约束
@@ -28,8 +30,7 @@ async def test_step_started_prints_step_number(capsys: pytest.CaptureFixture[str
 
 
 # 功能：验证 llm.token 事件将 token 无换行打印并设置 _inline 标志
-# 设计：发送 token 后检查 _inline 为 True，再发 step.started 触发 _ensure_newline，
-#       确认换行被补齐（新行里有 [step]），验证内联状态机的完整转换
+# 设计：先发 token，再发 step.started 触发 _ensure_newline，验证内联状态和补换行行为
 async def test_llm_token_inline_then_newline_on_next_event(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

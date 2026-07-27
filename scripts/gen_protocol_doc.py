@@ -2,6 +2,8 @@
 # 从 Pydantic 协议模型生成 WIRE_PROTOCOL.md。
 # S0 的核心思想是“代码模型才是协议事实来源”：请改 bus 模型后重新运行本脚本，
 # 不要直接手改生成出来的 WIRE_PROTOCOL.md，否则下次生成时改动会被覆盖。
+# S1 在生成结果里新增 Run / Step / Tool / LLM 事件；当前脚本还包含 S2+ 的
+# IPC 命令和 Session 事件，学习 S1 时只读对应事件章节即可。
 from __future__ import annotations
 
 import argparse
@@ -78,6 +80,7 @@ def _model_section(name: str, model: type, example: dict | None = None) -> str: 
 # 生成完整的 WIRE_PROTOCOL.md 文档字符串
 def generate() -> str:
     # 当前 main 会生成所有阶段的协议；学习 S0 时只看 Ping/Pong、CoreStarted 和错误码。
+    # 学习 S1 时再读 Run Events；AgentRun/EventSubscribe 属于 S2 的 IPC 外化。
     run_id = "20260516-100000-abc123"
     ts = "2026-05-16T10:00:00.001Z"
 

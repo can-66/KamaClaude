@@ -6,6 +6,8 @@ from pydantic import BaseModel, Discriminator
 
 # Command 表示“请 Core 做什么”，Event 表示“Core 里发生了什么”。
 # S0 只有启动事件 CoreStartedEvent；丰富的执行事件在后续阶段才出现。
+# S1 精读 Run / Step / Tool / LLM / LogLine 事件；它们共享 type、run_id、ts，
+# type 是反序列化时的“事件种类标签”，run_id 把同一次任务的事件串起来。
 
 # daemon 成功启动监听后可发布的事件模型
 class CoreStartedEvent(BaseModel):
@@ -15,7 +17,9 @@ class CoreStartedEvent(BaseModel):
 
 
 # ---------------- S1 及以后：S0 学习到这里可以先停 ----------------
+# S1 重点是下面的一次 Agent run 可观测事件。
 
+# 宣布一次 run 已创建；goal 是用户交给 Agent 的原始目标
 class RunStartedEvent(BaseModel):
     type: Literal["run.started"] = "run.started"
     run_id: str
@@ -23,6 +27,7 @@ class RunStartedEvent(BaseModel):
     ts: str  # ISO 8601
 
 
+# 宣布 run 的最终状态；reason 只在失败时解释终止原因
 class RunFinishedEvent(BaseModel):
     type: Literal["run.finished"] = "run.finished"
     run_id: str
@@ -32,6 +37,7 @@ class RunFinishedEvent(BaseModel):
     ts: str
 
 
+# 宣布第 N 次“调用 LLM 并按需执行工具”的步骤开始
 class StepStartedEvent(BaseModel):
     type: Literal["step.started"] = "step.started"
     run_id: str
@@ -39,6 +45,7 @@ class StepStartedEvent(BaseModel):
     ts: str
 
 
+# 宣布第 N 步正常走到末尾；异常或取消可能在发布它之前离开该步
 class StepFinishedEvent(BaseModel):
     type: Literal["step.finished"] = "step.finished"
     run_id: str
@@ -46,6 +53,7 @@ class StepFinishedEvent(BaseModel):
     ts: str
 
 
+# 工具执行前发布；tool_use_id 来自模型，用来把请求与结果精确配对
 class ToolCallStartedEvent(BaseModel):
     type: Literal["tool.call_started"] = "tool.call_started"
     run_id: str
@@ -55,6 +63,7 @@ class ToolCallStartedEvent(BaseModel):
     ts: str
 
 
+# 工具成功返回后发布；output 是后续阶段为 TUI 展示补充的字段
 class ToolCallFinishedEvent(BaseModel):
     type: Literal["tool.call_finished"] = "tool.call_finished"
     run_id: str
@@ -65,6 +74,7 @@ class ToolCallFinishedEvent(BaseModel):
     ts: str
 
 
+# 工具未完成时发布；错误被结构化记录后仍可作为 tool_result 交还模型
 class ToolCallFailedEvent(BaseModel):
     type: Literal["tool.call_failed"] = "tool.call_failed"
     run_id: str
@@ -78,6 +88,7 @@ class ToolCallFailedEvent(BaseModel):
     ts: str
 
 
+# 模型每流出一小段文字就发布一次，因此终端不必等完整回答生成
 class LlmTokenEvent(BaseModel):
     type: Literal["llm.token"] = "llm.token"
     run_id: str
@@ -85,6 +96,7 @@ class LlmTokenEvent(BaseModel):
     ts: str
 
 
+# 一次模型调用结束后的 token 用量；context_pct 是后续压缩阶段新增
 class LlmUsageEvent(BaseModel):
     type: Literal["llm.usage"] = "llm.usage"
     run_id: str
@@ -96,6 +108,7 @@ class LlmUsageEvent(BaseModel):
     ts: str
 
 
+# 记录本步实际选择的模型；S1 只有 static 策略
 class LlmModelSelectedEvent(BaseModel):
     type: Literal["llm.model_selected"] = "llm.model_selected"
     run_id: str
@@ -104,6 +117,7 @@ class LlmModelSelectedEvent(BaseModel):
     ts: str
 
 
+# 为结构化日志预留的事件模型；原始 S1 主链并没有实际发布它
 class LogLineEvent(BaseModel):
     type: Literal["log.line"] = "log.line"
     run_id: str
@@ -112,6 +126,8 @@ class LogLineEvent(BaseModel):
     message: str
     ts: str
 
+
+# ---------------- S4+：会话事件，学习 S1 时从这里跳到 Event 联合 ----------------
 
 class SessionCreatedEvent(BaseModel):
     type: Literal["session.created"] = "session.created"
@@ -209,6 +225,7 @@ class SkillInvokedEvent(BaseModel):
 
 
 # 根据 type 字段决定事件类型；这与 commands.py 中的 Command 联合采用同一思路。
+# 当前 main 的联合包含所有阶段，S1 只需识别上面的执行事件。
 Event = Annotated[
     CoreStartedEvent
     | RunStartedEvent

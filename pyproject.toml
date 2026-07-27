@@ -4,6 +4,10 @@
 # 1. 这个文件不是业务代码，而是 Python 项目的“说明书”。
 # 2. 初学 S0 时先看 [project]、[project.scripts] 和 pytest 配置即可。
 # 3. 最关键的是 [project.scripts]：它把终端命令映射到 Python 函数。
+#
+# S1 新手再多看两处：
+# 1. anthropic 是 S1 新增的 LLM SDK；textual 与 httpx[socks] 服务于后续阶段，可先跳过。
+# 2. `kama run` 没有独立脚本入口，它仍从 kama → cli.main:main 进入，再由子命令分发。
 
 # ---- PEP 517：声明如何构建 wheel/sdist ----
 [build-system]
@@ -18,9 +22,9 @@ requires-python = ">=3.12,<3.13" # 仅支持 3.12 小版本范围，与 CI/类�
 dependencies = [
     "pydantic>=2.0",       # 数据校验与序列化（含 JSON 模型等）
     "python-dotenv>=1.0",  # .env 文件解析
-    "anthropic>=0.25",     # Anthropic LLM SDK（流式 + prompt caching）
-    "textual>=0.75",       # 终端 UI 框架（kama-tui）
-    "httpx[socks]>=0.28.1",
+    "anthropic>=0.25",     # S1：Anthropic LLM SDK（流式输出 + prompt caching）
+    "textual>=0.75",       # S3+：终端 UI 框架（kama-tui）
+    "httpx[socks]>=0.28.1", # 后续阶段：代理支持与流中断重试
 ]
 
 # 安装后可在 PATH 中执行的入口：等号左边是终端命令，右边是“模块:函数”

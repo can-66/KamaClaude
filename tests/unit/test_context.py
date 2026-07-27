@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from kama_claude.core.context import ExecutionContext
 
+# 本文件验证 S1 对话状态机的数据形状，不调用真实 LLM 或文件工具。
+# 读测试时重点观察 messages 的 user / assistant / tool_result 排列。
 
 # 功能：验证 ExecutionContext 初始化时将 goal 包装为第一条 user 消息
 # 设计：直接检查 messages 列表初始状态，不经过任何方法，因为这是 Anthropic messages 格式的起点，必须精确

@@ -19,13 +19,17 @@ from dotenv import load_dotenv
 from kama_claude.core.config import KamaConfig
 from kama_claude.core.runner import AgentRunner
 
-# Load project .env so ANTHROPIC_API_KEY is available without going through get_config()
+# 这是 S1 唯一会访问真实 Anthropic API 的集成测试；没有 key 时会明确 skip。
+# 它直接调用 AgentRunner，刻意绕过当前 main 的 S2 IPC 与 S4 session 外壳。
+
+# 不经过 get_config()，因此在模块加载时单独读取项目 .env 中的 API key
 load_dotenv(Path(__file__).parent.parent.parent / ".env", override=False)
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture()
+# 创建只含一个可识别数字的临时文件，供真实模型请求 read_file
 def sample_file(tmp_path: Path) -> Path:
     f = tmp_path / "sample.txt"
     f.write_text(
@@ -35,9 +39,8 @@ def sample_file(tmp_path: Path) -> Path:
     return f
 
 
-# 功能：验证完整的端到端 agent 链路：调用真实 LLM → 执行 read_file → 成功完成并写入 events.jsonl
-# 设计：使用真实 ANTHROPIC_API_KEY 和真实文件，goal 中指定一个具体的数字（7391）以便断言 LLM 确实读了文件；
-#       通过 events.jsonl 的事件序列断言每个关键阶段都被记录，而非只检查 stdout，因为 events.jsonl 是 S1 的核心验收产物
+# 功能：验证真实 LLM 会发起 read_file，run 能成功结束并写出基础事件
+# 设计：检查 read_file started 与任意 finished；未按 ID 证明其成功，也未断言回答含 7391
 async def test_run_e2e_reads_file_and_succeeds(
     sample_file: Path,
     tmp_path: Path,
@@ -46,7 +49,7 @@ async def test_run_e2e_reads_file_and_succeeds(
     if not os.environ.get("ANTHROPIC_API_KEY"):
         pytest.skip("ANTHROPIC_API_KEY not set")
 
-    # ReadFileTool resolves paths relative to CWD — point it at tmp_path
+    # ReadFileTool 按当前工作目录解释相对路径，因此让 CWD 指向 sample.txt 所在目录。
     monkeypatch.chdir(tmp_path)
 
     goal = (
@@ -86,7 +89,7 @@ async def test_run_e2e_reads_file_and_succeeds(
         f"run finished with status={finished['status']!r}, reason={finished.get('reason')!r}"
     )
 
-    # ── read_file was actually invoked ────────────────────────────────────────
+    # ── 模型确实发起过 read_file；started 本身不证明该工具已成功返回 ──────────
     tool_starts = [e for e in events if e["type"] == "tool.call_started"]
     assert any(e["tool_name"] == "read_file" for e in tool_starts), (
         "expected at least one read_file tool call"
